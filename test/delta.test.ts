@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 process.env.DATABASE_PATH = ":memory:";
-process.env.LLM_MODE = "offline";
+process.env.LLM_MODE = "offline";process.env.AGENT_MODE="rules";process.env.LOG_PROMPTS="true";
 const { seed } = await import("../server/seed.js");
 const { principal, db } = await import("../server/store/db.js");
 const { syncGitHub, githubMask } = await import(

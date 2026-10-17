@@ -8,6 +8,7 @@ import {
   unionLabels,
   validateCitations,
 } from "./security.js";
+import { highRiskBackstop } from "./security.js";
 import { offline, llmCall, logCall, summaryModel } from "./agents/llm.js";
 import { serial } from "./agents/turn.js";
 export function getDelta(p: Principal, channelId: string) {
@@ -18,7 +19,7 @@ export function getDelta(p: Principal, channelId: string) {
     | { last_sha: string; last_seq: number }
     | undefined;
   const prs = store
-    .list(p, { channel: channelId, type: "pr", after: cursor?.last_seq || 0 })
+    .active(p, { channel: channelId, type: "pr", after: cursor?.last_seq || 0 })
     .filter(
       (r) =>
         r.labels_mask === 0 &&
@@ -49,7 +50,7 @@ export async function deliverDigest(user: Principal, channelId: string) {
       records = delta.records;
     let text = records.length
       ? records.map((r) => r.text).join("\n\n")
-      : "No new merged, customer-facing changes since your team’s last delivered digest.";
+      : "No new customer-facing changes since your team’s last delivered digest.";
     let citations = records.map((r) => r.id);
     const model = offline() ? "offline-digest-v1" : summaryModel();
     const prompt =
@@ -99,7 +100,7 @@ export async function deliverDigest(user: Principal, channelId: string) {
       agent.team_id,
     );
     const scan = outboundScan(agent, text, records);
-    if (records.some((r) => !validated.source_ids.includes(r.id)) || !scan.ok)
+    if (records.some((r) => !validated.source_ids.includes(r.id)) || !scan.ok || !highRiskBackstop(text,records).ok)
       throw Error("Digest validation failed; cursor was not advanced");
     const labels = unionLabels(records, user.clearance_mask);
     const manifest: Manifest = {
