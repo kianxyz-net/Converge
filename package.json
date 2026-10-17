@@ -13,7 +13,8 @@
     "eval": "node --import tsx eval/run.ts",
     "eval:attacks": "node --import tsx eval/attacks.ts",
     "mcp:stdio": "node --import tsx mcp/stdio.ts",
-    "eval:negotiation": "node --import tsx --test test/negotiation*.test.ts"
+    "eval:negotiation": "node --import tsx --test test/negotiation*.test.ts",
+    "eval:handoff": "node --import tsx --test test/handoff.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

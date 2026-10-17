@@ -180,6 +180,11 @@ test("HTTP identity, source, hash and authority overrides are rejected", async (
       ).status,
       400,
     );
+    const reflected = await call("/api/handoff/session", tokens.sales, {
+      identity: "CANARY-ENG-7F3A",
+    });
+    assert.equal(reflected.status, 400);
+    assert.ok(!JSON.stringify(reflected.body).includes("CANARY-"));
     const ch = h.currentChannel();
     for (const id of ["ENG-ROADMAP", "PR-419", "INFRA-NOTE"]) {
       const r = await call(

@@ -561,14 +561,17 @@ export async function finishApp(frontend = true) {
         error:
           err instanceof z.ZodError
             ? "Invalid request: " +
-              err.issues
-                .map((x) => x.path.join(".") + " " + x.message)
-                .join("; ")
+              err.issues.map((x) => x.path.join(".") + " " + x.code).join("; ")
             : e.status
               ? e.message
               : "Operation failed. No unvalidated agent answer was delivered.",
       });
-      console.error(e.message);
+      console.error(
+        "Request rejected",
+        err instanceof z.ZodError
+          ? "validation"
+          : "status " + (e.status || 500),
+      );
     },
   );
   return app;

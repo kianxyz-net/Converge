@@ -1,10 +1,10 @@
-# Relay · two teams, one workable plan
+# Relay · permission-aware answers and human-controlled handoffs
 
-A Slack-style negotiation demo for AsterCloud’s fictional Northstar pilot. Each team works with its own agent and private evidence. Humans choose exactly which arguments and quotations reach the other team. Both teams must approve the final decision.
+A single-screen, fictional Northwind demo. Sales gets cited product answers, escalates unknown questions to Engineering, and receives only the exact response a human engineer approved. Infrastructure has separate private context and no release authority.
 
-## Run
+## Run in three commands
 
-Requires Node 20.12+ and pnpm. From this checkout:
+Node 20.12+ and pnpm are required. From this checkout:
 
 ```sh
 pnpm install
@@ -12,70 +12,87 @@ pnpm seed
 pnpm dev
 ```
 
-Open **http://127.0.0.1:4173/demo** (or `/`). There are exactly three channels:
+Open **http://127.0.0.1:4173/demo** (or `/`). No API key is needed. The default **Offline demo** uses deterministic rules and the real retrieval, approval, release and security-check services.
 
-- **#team-b**: Maya, Agent B, and 38 private Business records from client calls/chats, internal discussion and CRM.
-- **#team-t**: Noah, Agent T, and 33 private Technical records from GitHub, team discussion and calendars.
-- **#collab**: approved proposals, selected excerpts, direct human discussion and joint decision review.
+## The 90-second flow
 
-Switch identities in the sidebar. The other team’s channel stays locked. Click source IDs for local source details; fictional GitHub URLs are not external links. Use **Reset demo** for a new empty collaboration with the same private fixtures. Reset preserves old immutable audit records in a retired run.
+1. Start as **Sales · Priya**. Click **Enterprise rate limits**: the answer includes 5,000 requests/minute per API key, 2x bursts for 10 seconds, and HTTP 429 with Retry-After. Open the DOC-001 and PR-412 citations in the evidence inspector.
+2. Click **On-prem launch date**. There is no confirmed date in released evidence. Confirm the exact question and click **Send to Engineering**.
+3. Switch to **Engineering · Ava**. The Review tab contains a private draft. Edit the text or click **Use no-commitment wording**, then **Save revision**. Review the exact text, check approval and click **Approve exact text**.
+4. Approval alone shares nothing. Check the release acknowledgement and click **Release to Sales**. Editing before release clears the approval; save and reapprove the new hash.
+5. Return to Sales and ask the on-prem question again. It cites the new shared artifact. Original Engineering notes and PR #419 remain inaccessible.
+6. Open **Security**, run all eight checks, and inspect the real results. **Reset demo** restores the original fixtures, empty approvals and no released artifacts.
 
-## Three-minute flow
+The evidence inspector shows source ID, owner, access policy, source type, state and content. Only authorized source counts are shown. Infrastructure can inspect its own restricted source, but cannot approve or release. [DEMO.md](DEMO.md) is the timed walkthrough.
 
-1. As Business, click **Use suggested request**, then **Send**. Agent B prepares 2–4 cited argument cards.
-2. Review every argument. Evidence sharing is **off by default**. Select any exact quotes you want to share, click **Preview**, confirm the exact text, then **Post to #collab**.
-3. Switch to Technical. Its agent has automatically staged a private response to the approved request. Review **Counterproposal** or **Accept with conditions**, select optional evidence, preview and publish.
-4. Switch back to Business. Mention Agent B to prepare a reply. Every new agent publication needs another human review. The showcase permits three proposal rounds.
-5. In #collab, **Prepare decision**. Edit the summary from approved shared arguments, keep unresolved readiness gates conditional, and request separate approvals. Both teams approve the same content hash. A conditional plan stays **Conditional / pending readiness** even after both approve.
+## Seeded data and permissions
 
-Ordinary human messages can be sent in #collab after acknowledging **Visible to both teams**. Shared-channel mentions stage private drafts; they do not automatically publish the request or reply. [DEMO.md](DEMO.md) has the full walkthrough and privacy check.
+| Audience | Sources |
+|---|---|
+| Shared | Enterprise documentation; merged/customer-approved PR #412 |
+| Engineering only (bit 1) | Tentative on-prem roadmap; unreleased PR #419; malicious test-only source; Engineering canary |
+| Sales only (bit 2) | Unconfirmed Northwind signing condition; Sales canary |
+| Infrastructure only (bit 4) | Restricted operational source; Infrastructure canary |
 
-## Honest offline mode and real LLM mode
+Shared records have mask 0. The server resolves principals from opaque demo tokens. Events, chunks and search are accessed only through `server/store/visibility.ts`. The mask is applied in SQL before source retrieval/model context construction. Source inspection uses the same rule. UI identities never select their own clearance or release authority. Demo identities are freely selectable and **not production authentication**.
 
-With no API key, the default is **Offline simulation**: deterministic evidence-selection heuristics, not autonomous model reasoning. It reads the real scoped fixtures and uses the same review, quotation validation and publish services as LLM mode. It does not read a precomputed compromise.
+## Security runner
 
-For real generation, set these in `.env`:
+The clickable scenarios execute backend checks in isolated scratch channels in the same SQLite store. Results are computed, not prefilled. They cover:
 
-```sh
-AGENT_MODE=llm
-ANTHROPIC_API_KEY=your-key
-ANSWER_MODEL=your-account-supported-model
-```
+- A: supported answer, valid citations and evidence.
+- B: direct extraction refusal and pre-generation filtering.
+- C: a real malicious private document cannot grant access to Infrastructure.
+- D: no other-team canaries in tested answers, citations, evidence or scoped snapshots.
+- E: an unconfirmed launch date stages escalation without sending it.
+- F: Sales, Infrastructure, agents and MCP-scoped principals cannot approve/release.
+- G: edit invalidates approval; only reapproval permits the new exact text to be released.
+- H: team-filtered SQL retrieval and inspection deny other teams.
 
-Restart `pnpm dev`. If mode is unset and a key is present, the negotiation uses LLM mode. Explicit `AGENT_MODE=rules` always selects simulation. Missing keys in explicit LLM mode produce a clear error, never a silent canned response. The existing Anthropic wrapper handles retries, usage logging and forced structured `respond` output. The inherited default model name must be supported by your account; live account/model availability was not verified here.
+The runner always uses deterministic generation, even if interactive LLM mode is enabled. These are scoped synthetic enforcement checks, **not proof against every leak or a live-model injection benchmark**. Reports contain no private source text/canaries. Repeating checks does not alter the active conversation. Scratch records are retired append-only.
 
-Only authorized evidence (maximum twelve retrieved records) and approved shared discussion enter generation. QA reference and `evaluation_only_expected_discovery` are excluded from runtime fixtures. Changing source fixtures requires a demo reset to load the new run. Live reasoning and the CSV-evidence ablation must be tested with your model; local adapter mocks do not establish model quality.
-
-## Verification
+## Tests and verification
 
 ```sh
 pnpm check             # strict TypeScript
-pnpm test              # existing safeguards + negotiation HTTP/SSE/workflow/adapter tests
-pnpm eval:negotiation  # focused new workflow and structured-adapter tests
+pnpm test              # full regression suite, including three-team handoff and scenario runner
+pnpm eval:handoff      # focused handoff acceptance tests
 pnpm eval              # retained original 24-case knowledge-answer regression set
 pnpm build             # production bundle; no deployment
-pnpm demo:reset        # new run, original fixture IDs, empty collaboration
+pnpm demo:reset        # new active fixture run; preserves historical events
 ```
 
-The retained `eval:attacks` command exercises the older knowledge-answer services; set `ATTACK_RESULTS_PATH=.data/attack-results.json` to preserve historical checked-in results. It is not a substitute for the new negotiation tests.
-
-## Boundaries and limitations
-
-Server-side bearer principals determine clearance and release authority. Shared=0, Technical=1, Business=2. `server/store/visibility.ts` remains the sole gateway to events, chunks and search. Drafts stay private. Publications validate source ownership and exact substring quotations, bind the server-built preview hash, and create an immutable private approval audit plus a new shared record. The shared snapshot contains no raw private sources or drafts. Recipients can inspect approved excerpts but cannot retrieve the underlying private record. SSE carries refresh notifications, not raw source or model-token payloads.
-
-Draft arguments must cite retrieved sources, avoid financial/internal deal material and avoid six-token verbatim private quotes in prose. These checks are heuristics, not semantic proof. Humans must review agent prose even when no evidence checkbox is selected. Source-supported dates are explicitly proposals; a final commitment requires exact-text approval from each team and resolved conditions. Demo identities are freely selectable and are **not production authentication**. Team clearance does not isolate individuals on a team.
-
-`LOG_PROMPTS` defaults false; enabling it stores private prompts in the local database. Tests enable it only in memory. `.env` and `.data/` are ignored. No live GitHub/Zoom/CRM/Slack integrations, operator UI, artifact manager, export UI, MCP UI, software hosting, or production deployment are part of this demo. Older services/tests are retained internally; the old dashboard entry module is archived in `web/legacy-main.tsx` and is not imported by the app.
-
-See [DESIGN.md](DESIGN.md) for architecture and decisions, [AGENTS.md](AGENTS.md) for invariants, and [IMPLEMENTATION.md](IMPLEMENTATION.md) for commands actually run and limitations.
-
-Optional browser rehearsal on macOS (uses a separate empty memory database):
+Optional browser rehearsal on macOS with installed Chrome:
 
 ```sh
-# terminal 1
-PORT=4180 DATABASE_PATH=:memory: AGENT_MODE=rules pnpm dev
+# terminal 1: separate, empty in-memory demo
+PORT=4181 DATABASE_PATH=:memory: AGENT_MODE=rules pnpm dev
 # terminal 2
 python3 scripts/browser-rehearsal.py
 ```
 
-This drives installed Chrome with an isolated temporary profile. It publishes demo content and resets **port 4180 only**; never point it at an active workspace. `RELAY_BROWSER_PATH` can select a different Chrome executable. Running two dev servers may log a Vite HMR-port warning; it does not affect the tested HTTP/SSE workflow.
+The browser script uses an isolated temporary profile and only port 4181. It publishes demo content and resets that scratch workspace. Never point it at an active user workspace. `RELAY_BROWSER_PATH` can select another Chrome executable. Concurrent dev servers may log a Vite HMR-port warning; the HTTP flow remains functional.
+
+`eval:attacks` retains the older 35-scenario REST/MCP regression harness; use `ATTACK_RESULTS_PATH=.data/attack-results.json` to preserve historical results. The previous negotiation implementation/tests remain internally, with its UI archived in `web/negotiation-main.tsx`. It is not the active demo. No old dashboard/operator privilege exchange is available to handoff session tokens.
+
+## Optional real model
+
+Copy `.env.example` to `.env` if desired. For live generation, configure:
+
+```sh
+AGENT_MODE=llm
+ANTHROPIC_API_KEY=your-server-side-key
+ANSWER_MODEL=an-account-supported-model
+```
+
+Restart the server. The existing Anthropic adapter sits behind the structured generation service, with bounded tools, one transient retry and full-response validation. Credentials stay on the server. No model gets shell, SQL, filesystem or unrestricted network tools. Explicit rules mode needs no provider. The inherited default model name requires account verification; set a model your account supports.
+
+No real API key was available during this implementation: **live provider/model availability and live-model injection robustness remain unverified**. Existing SDK mock tests validate adapter mechanics, not real model quality. If live generation fails, no unvalidated answer is returned; reset/retry after fixing configuration. `LOG_PROMPTS` defaults false. Enabling it stores private prompts locally; tests enable it only in memory.
+
+## Boundaries and limitations
+
+Approving and releasing are separate server transitions. Both require a human with Engineering release authority and the current content hash. Each saved edit appends a private revision and invalidates approval. Release creates a new immutable shared artifact; its API projection excludes private refs, manifests and draft reasoning. Original sources never change. Approval/release history stays private to authorized reviewers. Unknown source IDs and forbidden IDs use the same error response; validation errors/default logs do not echo input/model values.
+
+The source-conflict backstop detects inconsistent rate-limit values or explicitly stale/expired source states. It is not a general semantic conflict detector. Valid citations do not prove entailment. Fingerprint scanning is defense in depth and can miss paraphrases; humans can approve a mistaken disclosure. Isolation is between teams, not people within one team. Refresh polling updates team snapshots; unvalidated model tokens are never streamed. No production auth, tenant isolation, live connectors, software execution or deployment is included.
+
+See [DESIGN.md](DESIGN.md), [AGENTS.md](AGENTS.md) and [IMPLEMENTATION.md](IMPLEMENTATION.md) for decisions, invariants and verification details.
