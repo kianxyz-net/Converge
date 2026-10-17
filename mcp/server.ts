@@ -1,3 +1,4 @@
+import{asMcp}from"../server/auth.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Principal } from "../server/types.js";
@@ -5,7 +6,8 @@ import { myConversation, questions, pending, fail } from "../server/core.js";
 import { turn } from "../server/agents/turn.js";
 import { deliverDigest } from "../server/delta.js";
 import { retriever } from "../server/store/visibility.js";
-export function createMcp(p: Principal) {
+export function createMcp(user: Principal) {
+ const p=asMcp(user);
   const server = new McpServer({ name: "relay-team-agents", version: "0.2.0" });
   const result = (value: unknown) => ({
     content: [{ type: "text" as const, text: JSON.stringify(value) }],
@@ -63,7 +65,7 @@ export function createMcp(p: Principal) {
           isError: true,
           content: [{ type: "text", text: "Engineering only" }],
         };
-      return result(pending(p).filter((r) => r.state === "pending"));
+      return result(pending(p).filter((r) => r.state === "staged"));
     },
   );
   return server;

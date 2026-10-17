@@ -65,7 +65,7 @@ test("citations default to escalation and scanner blocks seeded leaks", () => {
 test("randomized assembled contexts and SQL retrieval never exceed clearance", async () => {
   const { assemble } = await import("../server/agents/turn.js");
   const { db } = await import("../server/store/db.js");
-  db.prepare("INSERT INTO channels VALUES(?,?,?,?)").run(
+  db.prepare("INSERT INTO channels(id,name,account,created_by) VALUES(?,?,?,?)").run(
     "property",
     "Property",
     "Property",
