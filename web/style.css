@@ -1424,3 +1424,29 @@ textarea {
     flex-wrap: wrap;
   }
 }
+
+/* Artifact workspace: reuse the existing responsive panels and theme. */
+.context-tabs {
+  flex-wrap: wrap;
+}
+.artifact-card h3 {
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.artifact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.artifact-hash {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  margin: 8px 0;
+}
+.artifact-card small {
+  display: block;
+  line-height: 1.5;
+  opacity: 0.75;
+}

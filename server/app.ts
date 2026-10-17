@@ -24,7 +24,12 @@ import { deliverDigest } from "./delta.js";
 import { ingest } from "./connectors/ingest.js";
 import { seed, resetDemo, activeDemoChannel } from "./seed.js";
 import { mountMcp } from "../mcp/http.js";
+import { artifacts, artifactHistory } from "./artifacts.js";
 export const app = express();
+const auditRead = (p: Principal, action: string, target: string) =>
+  db
+    .prepare("INSERT INTO audit(ts,principal_id,action) VALUES(?,?,?)")
+    .run(new Date().toISOString(), p.id, action + ":" + target);
 app.use(express.json({ limit: "2mb" }));
 app.use((req, res, next) => {
   if (
@@ -117,11 +122,16 @@ app.post("/api/auth/switch", (req, res, next) => {
     next(e);
   }
 });
-app.post("/api/auth/operator", (_req, res) => {
-  if (process.env.ENABLE_DEMO_OPERATOR === "false")
-    return res.status(403).json({ error: "Operator mode disabled" });
-  res.json(issueToken("operator"));
-});
+app.post(
+  "/api/auth/operator",
+  wrap((_req, res, p) => {
+    requireEngineer(p);
+    if (process.env.ENABLE_DEMO_OPERATOR === "false")
+      return res.status(403).json({ error: "Operator mode disabled" });
+    auditRead(p, "operator_exchange", "operator");
+    res.json(issueToken("operator"));
+  }),
+);
 app.post(
   "/api/github/sync",
   wrap(async (req, res, p) => {
@@ -232,8 +242,25 @@ app.post(
   }),
 );
 app.get(
+  "/api/channels/:id/artifacts",
+  wrap((req, res, p) => {
+    res.json(artifacts(p, id(req, "id")));
+  }),
+);
+app.get(
+  "/api/artifacts/:id/history",
+  wrap((req, res, p) => {
+    auditRead(p, "inspect_history", id(req, "id"));
+    const history = artifactHistory(p, id(req, "id"));
+    if (!history)
+      return res.status(404).json({ error: "Artifact not visible" });
+    res.json(history);
+  }),
+);
+app.get(
   "/api/records/:id",
   wrap((req, res, p) => {
+    auditRead(p, "inspect_record", id(req, "id"));
     const record =
       store.get(p, id(req, "id")) || store.getChunk(p, id(req, "id"));
     if (!record) return res.status(404).json({ error: "Record not visible" });
@@ -243,6 +270,7 @@ app.get(
 app.get(
   "/api/events/:id/inspect",
   wrap((req, res, p) => {
+    auditRead(p, "inspect_manifest", id(req, "id"));
     const event = store.get(p, id(req, "id"));
     if (!event) return res.status(404).json({ error: "Event not visible" });
     res.json(

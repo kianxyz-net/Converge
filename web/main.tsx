@@ -20,6 +20,21 @@ type RecordRow = {
   conversation_id: string | null;
   withdrawn?: boolean;
 };
+type Artifact = {
+  id: string;
+  type: string;
+  title: string;
+  version: number;
+  owner: string;
+  audience: string;
+  labels_mask: number;
+  status: string;
+  hash: string;
+  approved_by: string | null;
+  created_at: string;
+  source_ids: string[];
+  text: string;
+};
 type Channel = {
   id: string;
   name: string;
@@ -168,6 +183,7 @@ function RelayPane({
     [questions, setQuestions] = useState<Question[]>([]),
     [releases, setReleases] = useState<Release[]>([]),
     [docs, setDocs] = useState<Doc[]>([]),
+    [artifacts, setArtifacts] = useState<Artifact[]>([]),
     [tab, setTab] = useState(
       split && initialUser === "ava" ? "releases" : "thread",
     ),
@@ -217,6 +233,7 @@ function RelayPane({
     setThread([]);
     setReleases([]);
     setDocs([]);
+    setArtifacts([]);
     setQuestions([]);
     setDrawer(null);
     setText("");
@@ -238,7 +255,7 @@ function RelayPane({
       const cs = await request<Channel[]>("/channels", token);
       const c = cs.find((c) => c.id === channelId) || cs[0];
       if (!c) return;
-      const [m, t, q, r, d, ep] = await Promise.all([
+      const [m, t, q, r, d, ep, arts] = await Promise.all([
         request<RecordRow[]>(
           "/conversations/" + c.conversation_id + "/messages",
           token,
@@ -250,6 +267,7 @@ function RelayPane({
         request<
           { id: string; text: string; text_hash: string; state: string }[]
         >("/escalations?channel_id=" + c.id, token),
+        request<Artifact[]>("/channels/" + c.id + "/artifacts", token),
       ]);
       if (gen !== alive.current || version !== loadVersion.current) return;
       setChannels(cs);
@@ -260,6 +278,7 @@ function RelayPane({
       setReleases(r.filter((x) => x.event.channel_id === c.id));
       setDocs(d);
       setProposals(ep);
+      setArtifacts(arts);
     } catch (e) {
       if (gen === alive.current) setError((e as Error).message);
     }
@@ -655,9 +674,10 @@ function RelayPane({
         <aside className="context">
           <div className="context-tabs">
             {[
-              ["thread", "Thread"],
+              ["thread", "Activity"],
+              ["artifacts", "Library"],
               ["questions", "Questions"],
-              ["releases", "Releases"],
+              ["releases", eng ? "Approvals" : "Review status"],
               ["documents", "Docs"],
             ].map(([key, title]) => (
               <button
@@ -677,12 +697,94 @@ function RelayPane({
             ))}
           </div>
           <div className="context-scroll">
+            {tab === "artifacts" && (
+              <>
+                <div className="panel-heading">
+                  <span className="eyebrow">KNOWLEDGE LIBRARY</span>
+                  <h2>Share the result. Keep control of the sources.</h2>
+                  <p>
+                    Only artifacts visible to your team appear here. Versions
+                    count visible uploads of the same document name.
+                  </p>
+                </div>
+                {!artifacts.length && (
+                  <p className="empty-state">
+                    No artifacts yet. Engineering can upload a document or
+                    review an escalated answer.
+                  </p>
+                )}
+                {artifacts.map((a) => (
+                  <article className="thread-card artifact-card" key={a.id}>
+                    <div className="card-meta">
+                      <Badge mask={a.labels_mask} />
+                      <span>
+                        {a.type} · v{a.version} · {a.status}
+                      </span>
+                    </div>
+                    <h3>{a.title}</h3>
+                    <p>
+                      {a.audience} · Owner: {a.owner}
+                      {a.approved_by ? ` · Approved by ${a.approved_by}` : ""}
+                    </p>
+                    <p>
+                      {a.text.slice(0, 240)}
+                      {a.text.length > 240 ? "…" : ""}
+                    </p>
+                    <details>
+                      <summary>Identity & integrity</summary>
+                      <p>ID: {a.id}</p>
+                      <p>{a.created_at}</p>
+                      <code className="artifact-hash">SHA-256 {a.hash}</code>
+                    </details>
+                    <div className="artifact-actions">
+                      <button
+                        className="button"
+                        onClick={() => void source(a.id)}
+                      >
+                        Open artifact
+                      </button>
+                      <button
+                        className="button"
+                        onClick={() => {
+                          void request("/artifacts/" + a.id + "/history", token)
+                            .then((data) =>
+                              setDrawer({
+                                title: "Visible approval & source history",
+                                data,
+                              }),
+                            )
+                            .catch((e) => setError(e.message));
+                        }}
+                      >
+                        History
+                      </button>
+                    </div>
+                    <div className="citations">
+                      {a.source_ids.map((ref) => (
+                        <button key={ref} onClick={() => void source(ref)}>
+                          [{ref.slice(0, 8)}]
+                        </button>
+                      ))}
+                    </div>
+                    <small>
+                      Sharing this output does not grant access to private
+                      sources.
+                      {a.status === "retracted"
+                        ? " Withdrawn from future retrieval; delivered copies cannot be unsent."
+                        : ""}
+                    </small>
+                  </article>
+                ))}
+              </>
+            )}
             {tab === "thread" && (
               <>
                 <div className="panel-heading">
                   <span className="eyebrow">SHARED WITH BOTH TEAMS</span>
-                  <h2>One source of alignment.</h2>
-                  <p>Briefs, released context, and approved answers.</p>
+                  <h2>Shared knowledge, with evidence.</h2>
+                  <p>
+                    Released answers, documents, updates, and team messages.
+                  </p>
                 </div>
                 {thread.map((m) => (
                   <div className="thread-card" key={m.id}>
@@ -1348,15 +1450,16 @@ function Inspector({
     </>
   );
 }
-function Operator() {
+function Operator({ reviewerToken }: { reviewerToken?: string }) {
   const [token, setToken] = useState(""),
     [records, setRecords] = useState<RecordRow[]>([]),
     [error, setError] = useState("");
   useEffect(() => {
-    void request<{ token: string }>("/auth/operator", undefined, {})
+    if (!reviewerToken) return;
+    void request<{ token: string }>("/auth/operator", reviewerToken, {})
       .then((d) => setToken(d.token))
       .catch((e) => setError(e.message));
-  }, []);
+  }, [reviewerToken]);
   const load = useCallback(() => {
     if (token)
       void request<RecordRow[]>("/operator/log", token)
@@ -1518,7 +1621,7 @@ function Demo() {
         />
       </div>
       {new URLSearchParams(location.search).get("operator") === "1" && (
-        <Operator />
+        <Operator reviewerToken={eng?.token} />
       )}
       {create && (
         <div className="modal-backdrop">
