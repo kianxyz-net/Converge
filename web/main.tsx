@@ -267,7 +267,7 @@ function App() {
     <div className="app-shell">
       <header className="app-header">
         <a className="brand" href="/">
-          relay<span>✳</span>
+          Converge<span>✳</span>
         </a>
         <div className="header-divider" />
         <span className="workspace-name">
@@ -372,7 +372,7 @@ function App() {
                     className="button primary"
                     disabled={busy || !token || !state || !question.trim()}
                   >
-                    {busy ? "Checking evidence…" : "Ask Relay ↗"}
+                    {busy ? "Checking evidence…" : "Ask Converge ↗"}
                   </button>
                 </div>
               </form>

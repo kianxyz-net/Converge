@@ -1,4 +1,4 @@
-# Relay · permission-aware answers and human-controlled handoffs
+# Converge · permission-aware answers and human-controlled handoffs
 
 A single-screen, fictional Northwind demo. Sales gets cited product answers, escalates unknown questions to Engineering, and receives only the exact response a human engineer approved. Infrastructure has separate private context and no release authority.
 

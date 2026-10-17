@@ -264,7 +264,7 @@ function App() {
     <div className="relay-app">
       <aside className="sidebar">
         <a className="logo" href="/">
-          relay<span>✳</span>
+          Converge<span>✳</span>
         </a>
         <div className="workspace">
           AsterCloud <span>DEMO</span>

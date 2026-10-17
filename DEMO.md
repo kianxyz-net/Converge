@@ -1,4 +1,4 @@
-# Relay · 90-second live demonstration
+# Converge · 90-second live demonstration
 
 Run `pnpm seed && pnpm dev`, open `/demo`, and reset if needed. The banner says **Offline demo · deterministic rules**. This demonstrates real permissions and approval transitions, not live-model reasoning.
 

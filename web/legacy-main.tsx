@@ -468,7 +468,7 @@ function RelayPane({
     <section className={"workspace " + (split ? "split-pane" : "")}>
       <header className="topbar">
         <a className="brand" href="/">
-          relay<span>✳</span>
+          Converge<span>✳</span>
         </a>
         <span className="divider" />
         <span className="workspace-name">Acme Cloud API</span>
@@ -1538,7 +1538,7 @@ function Demo() {
     <>
       <header className="demo-header">
         <a className="brand" href="/demo">
-          relay<span>✳</span>
+          Converge<span>✳</span>
         </a>
         <select
           aria-label="Shared demo channel"

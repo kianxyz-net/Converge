@@ -28,7 +28,7 @@ test("fresh-process startup preserves private fixture sources and starts collabo
       });
       child.stdout.on("data", (chunk) => {
         logs += chunk;
-        const match = logs.match(/Relay ready at (http:\/\/127\.0\.0\.1:\d+)/);
+        const match = logs.match(/Converge ready at (http:\/\/127\.0\.0\.1:\d+)/);
         if (match) {
           clearTimeout(timer);
           resolve(match[1]);

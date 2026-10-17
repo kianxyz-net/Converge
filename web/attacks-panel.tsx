@@ -60,7 +60,7 @@ export function AttacksPanel() {
     <section className="attacks-panel">
       <header className="topbar attacks-topbar">
         <a className="brand" href="/">
-          relay<span>✳</span>
+          Converge<span>✳</span>
         </a>
         <span className="divider" />
         <span className="workspace-name">Leak-attack panel</span>

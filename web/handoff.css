@@ -1223,3 +1223,8 @@ a {
 .scenario-run.failed {
   color: #b0546d;
 }
+
+@media (max-width: 760px) {
+  .brand {font-size:22px;letter-spacing:-1.2px;gap:6px;}
+  .brand span {font-size:18px;}
+}
