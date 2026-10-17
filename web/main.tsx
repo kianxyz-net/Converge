@@ -3,8 +3,6 @@ import { createRoot } from "react-dom/client";
 import "./negotiation.css";
 import "./style.css";
 import { AttacksPanel } from "./attacks-panel";
-import "./style.css";
-import { AttacksPanel } from "./attacks-panel";
 type Source = {
   id: string;
   kind: string;
