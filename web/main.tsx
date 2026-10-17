@@ -18,6 +18,7 @@ type RecordRow = {
   refs: string[];
   meta: Record<string, unknown>;
   conversation_id: string | null;
+  withdrawn?:boolean;
 };
 type Channel = {
   id: string;
@@ -147,10 +148,11 @@ function Badge({ mask }: { mask: number }) {
 }
 function RelayPane({
   initialUser,
-  split = false,
+  split = false,onSession,channelOverride,releaseToken,
 }: {
   initialUser: string;
   split?: boolean;
+  onSession?:(s:Session|null)=>void;channelOverride?:string;releaseToken?:string;
 }) {
   const [identity, setIdentity] = useState(initialUser),
     [stored, setStored] = useState<Session | null>(null),
@@ -161,7 +163,7 @@ function RelayPane({
     [questions, setQuestions] = useState<Question[]>([]),
     [releases, setReleases] = useState<Release[]>([]),
     [docs, setDocs] = useState<Doc[]>([]),
-    [tab, setTab] = useState("thread"),
+    [tab, setTab] = useState(split&&initialUser==='ava'?'releases':'thread'),
     [text, setText] = useState(""),
     [status, setStatus] = useState("idle"),
     [busy, setBusy] = useState(false),
@@ -173,9 +175,13 @@ function RelayPane({
     [newChannel, setNewChannel] = useState(false),
     [update, setUpdate] = useState(false),
     [mode, setMode] = useState("offline");
+  const [proposals,setProposals]=useState<{id:string;text:string;text_hash:string;state:string}[]>([]),[internalTerms,setInternalTerms]=useState<string[]>([]),[post,setPost]=useState(''),[postConfirmed,setPostConfirmed]=useState(false),[retractRecord,setRetractRecord]=useState<RecordRow|null>(null);
   const session = stored?.principal.id === identity ? stored : null,
     token = session?.token,
     eng = session?.principal.team_id === "eng";
+  useEffect(()=>{onSession?.(session)},[stored,identity,onSession]);
+  useEffect(()=>{if(channelOverride)setChannelId(channelOverride)},[channelOverride]);
+  useEffect(()=>{setInternalTerms([]);if(token&&eng)void request<{internalTerms:string[]}>('/policy',token).then(r=>setInternalTerms(r.internalTerms))},[token,eng]);
   const conv = channels.find((c) => c.id === channelId)?.conversation_id;
   const loadVersion = useRef(0);
   const alive = useRef(0),
@@ -209,7 +215,7 @@ function RelayPane({
       const cs = await request<Channel[]>("/channels", token);
       const c = cs.find((c) => c.id === channelId) || cs[0];
       if (!c) return;
-      const [m, t, q, r, d] = await Promise.all([
+      const [m, t, q, r, d, ep] = await Promise.all([
         request<RecordRow[]>(
           "/conversations/" + c.conversation_id + "/messages",
           token,
@@ -218,6 +224,7 @@ function RelayPane({
         request<Question[]>("/channels/" + c.id + "/questions", token),
         request<Release[]>("/releases/pending", token),
         request<Doc[]>("/channels/" + c.id + "/documents", token),
+        request<{id:string;text:string;text_hash:string;state:string}[]>("/escalations?channel_id="+c.id,token),
       ]);
       if (gen !== alive.current || version !== loadVersion.current) return;
       setChannels(cs);
@@ -226,7 +233,7 @@ function RelayPane({
       setThread(t);
       setQuestions(q);
       setReleases(r.filter((x) => x.event.channel_id === c.id));
-      setDocs(d);
+      setDocs(d);setProposals(ep);
     } catch (e) {
       if (gen === alive.current) setError((e as Error).message);
     }
@@ -297,9 +304,9 @@ function RelayPane({
   const citations = (refs: string[]) =>
     refs.length > 0 && (
       <div className="citations">
-        {refs.map((id) => (
+        {refs.map((id,i) => (
           <button key={id} onClick={() => void source(id)}>
-            ↗{" "}
+            [r{i+1}] ↗{" "}
             {id.startsWith("github")
               ? "GitHub PR"
               : id.startsWith("doc-")
@@ -332,6 +339,7 @@ function RelayPane({
                   : session?.principal.name}
             </strong>
             <Badge mask={m.labels_mask} />
+            {isAgent&&<span className={"state "+String(m.meta.status||"answered")}>{String(m.meta.status||"answered")}</span>}
             {isAgent && (
               <button className="inspect" onClick={() => void inspect(m.id)}>
                 Why this answer ↗
@@ -350,12 +358,9 @@ function RelayPane({
               Compare changes on GitHub ↗
             </a>
           )}
-          {m.meta.status === "needs_escalation" && (
-            <div className="escalated">
-              ↗ Escalated to Engineering · See Questions for the exact shared
-              text
-            </div>
-          )}
+          {m.withdrawn&&<div className="withdrawn">Withdrawn context — excluded from future answers. Earlier deliveries cannot be unsent.</div>}
+          {m.meta.status==='needs_escalation'&&(()=>{const staged=m.meta.escalation as {id:string;text:string;text_hash:string;state:string}|undefined;if(!staged)return null;const proposal=proposals.find(p=>p.id===staged.id)||staged;return <div className="escalated"><strong>{proposal.state==='staged'?'Nothing has been sent to Engineering.':proposal.state==='cancelled'?'Escalation cancelled.':'Sent to Engineering with your approval.'}</strong><p>{proposal.text}</p>{proposal.state==='staged'&&<div className="button-row"><button className="button primary"disabled={busy}onClick={()=>void run('/questions/escalate',{proposal_id:proposal.id,text_hash:proposal.text_hash,confirmed:true})}>Send to Engineering</button><button className="button"disabled={busy}onClick={()=>void run('/questions/'+proposal.id+'/cancel',{})}>Cancel</button></div>}</div>})()}
+
         </div>
       </article>
     );
@@ -417,8 +422,8 @@ function RelayPane({
         <div className="channel-actions">
           <span className="mode">
             <i />
-            {mode === "offline"
-              ? "Offline demo · grounded rules"
+            {mode === "rules"
+              ? "Rules mode · offline"
               : "Anthropic connected"}
           </span>
           <button
@@ -509,6 +514,7 @@ function RelayPane({
               <button onClick={() => setError("")}>×</button>
             </div>
           )}
+          <div className="quick-asks">{(eng?['What is the on-prem plan?','When will Northwind sign?']:['What are enterprise limits?','Do 429 responses include Retry-After?','What is the on-prem plan?','When will Northwind sign?']).map(q=><button key={q}onClick={()=>setText(q)}>{q}</button>)}</div>
           <form
             className="composer"
             onSubmit={async (e) => {
@@ -608,6 +614,8 @@ function RelayPane({
                     {citations(
                       m.refs.filter((ref) => thread.some((t) => t.id === ref)),
                     )}
+                    {m.withdrawn&&<div className="withdrawn">Retracted · Future context excludes this record. Earlier deliveries cannot be unsent.</div>}
+                    {(eng||releaseToken)&&!m.withdrawn&&['released_answer','document','update'].includes(String(m.meta.kind))&&<button className="text-button danger"onClick={()=>setRetractRecord(m)}>Retract release</button>}
                     <button
                       className="text-button"
                       onClick={() => void source(m.id)}
@@ -616,6 +624,7 @@ function RelayPane({
                     </button>
                   </div>
                 ))}
+                <form className="thread-composer"onSubmit={async e=>{e.preventDefault();const result=await run('/channels/'+channelId+'/thread',{text:post,confirmed:true});if(result){setPost('');setPostConfirmed(false)}}}><label>Shared human message<textarea value={post}onChange={e=>{setPost(e.target.value);setPostConfirmed(false)}}required maxLength={12000}placeholder="Post directly to both teams…"/></label><label className="confirm"><input type="checkbox"checked={postConfirmed}onChange={e=>setPostConfirmed(e.target.checked)}/>Both teams will see this exact message.</label><button className="button primary"disabled={busy||!postConfirmed||!post.trim()}>Post to shared thread</button></form>
               </>
             )}
             {tab === "questions" && (
@@ -631,7 +640,7 @@ function RelayPane({
                       <span className={"state " + q.state}>{q.state}</span>
                       <p>{q.text}</p>
                       {eng && q.state !== "answered" && (
-                        <button
+                      <button
                           className="button"
                           disabled={busy}
                           onClick={() =>
@@ -670,6 +679,7 @@ function RelayPane({
                       <ReleaseCard
                         key={r.id}
                         release={r}
+                        internalTerms={internalTerms}
                         busy={busy}
                         onApprove={async (value) => {
                           await run("/releases/" + r.id + "/approve", {
@@ -794,6 +804,7 @@ function RelayPane({
             : "Demo identities · Not production authentication"}
         </span>
       </footer>
+      {retractRecord&&<div className="modal-backdrop"><section className="modal"><button className="close"onClick={()=>setRetractRecord(null)}>×</button><h2>Retract this release?</h2><p>It will be excluded from future retrieval and answers. Earlier deliveries cannot be unsent. Historical records remain in the audit log.</p><pre className="release-preview">{retractRecord.text}</pre><button className="button primary"disabled={busy}onClick={async()=>{try{await request('/records/'+retractRecord.id+'/retract',releaseToken||token,{confirmed:true});setRetractRecord(null);await load()}catch(e){setError((e as Error).message)}}}>Confirm retraction</button></section></div>}
       {drawer && (
         <div className="drawer-backdrop" onClick={() => setDrawer(null)}>
           <section className="drawer" onClick={(e) => e.stopPropagation()}>
@@ -911,69 +922,10 @@ function RelayPane({
     </section>
   );
 }
-function ReleaseCard({
-  release: r,
-  busy,
-  onApprove,
-  onReject,
-  citations,
-}: {
-  release: Release;
-  busy: boolean;
-  onApprove: (s: string) => Promise<void>;
-  onReject: () => void;
-  citations: (refs: string[]) => React.ReactNode;
-}) {
-  const [text, setText] = useState(r.text),
-    [confirm, setConfirm] = useState(false);
-  return (
-    <div className="thread-card release-card">
-      <div className="card-meta">
-        <Badge mask={1} />
-        <span>
-          {r.kind} · {r.state}
-        </span>
-      </div>
-      {r.state === "pending" ? (
-        <>
-          <label>
-            Exact text to share
-            <textarea
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value);
-                setConfirm(false);
-              }}
-              maxLength={12000}
-            />
-          </label>
-          {citations(r.event.refs)}
-          <label className="confirm">
-            <input
-              type="checkbox"
-              checked={confirm}
-              onChange={(e) => setConfirm(e.target.checked)}
-            />
-            I approve this exact text for Sales.
-          </label>
-          <div className="button-row">
-            <button
-              className="button primary"
-              disabled={busy || !confirm || !text.trim()}
-              onClick={() => void onApprove(text)}
-            >
-              Approve & release
-            </button>
-            <button className="button" disabled={busy} onClick={onReject}>
-              Reject
-            </button>
-          </div>
-        </>
-      ) : (
-        <p className="preserve">{r.text}</p>
-      )}
-    </div>
-  );
+function ReleaseCard({release:r,busy,onApprove,onReject,citations,internalTerms=[]}:{release:Release;busy:boolean;onApprove:(s:string)=>Promise<void>;onReject:()=>void;citations:(refs:string[])=>React.ReactNode;internalTerms?:string[]}){
+ const[text,setText]=useState(r.text),[confirm,setConfirm]=useState(false),[values,setValues]=useState<Record<string,string>>({}),[none,setNone]=useState<Record<string,boolean>>({});
+ const fields=[...new Set([...(r.text.match(/\[(DATE|PRICE|SLA|AVAILABILITY)\]/g)||[]).map(f=>f.slice(1,-1)),...((r.event.meta.high_risk_fields as string[])||[])])];let approved=text;for(const field of fields)approved=approved.replaceAll('['+field+']',none[field]?`No ${field.toLowerCase()} is committed`:values[field]||'['+field+']');const blockedLineage=!!r.event.withdrawn;const blockedTerms=internalTerms.filter(term=>approved.toLowerCase().includes(term.toLowerCase()));const unresolved=/\[(DATE|PRICE|SLA|AVAILABILITY)\]/.test(approved)||fields.some(f=>!none[f]&&!values[f]);
+ return <div className="thread-card release-card"><div className="card-meta"><Badge mask={1}/><span>{r.kind} · {r.state}</span></div>{r.state==='staged'?<><label>Editable Engineering draft<textarea value={text}onChange={e=>{setText(e.target.value);setConfirm(false)}}maxLength={12000}/></label>{citations(r.event.refs)}{fields.map(field=><div className="risk-control"key={field}><label>{field} — human supplied<input type={field==='DATE'?'date':'text'}aria-label={field+' value'}value={values[field]||''}disabled={none[field]}onChange={e=>{setValues({...values,[field]:e.target.value});setConfirm(false)}}/></label><label className="confirm"><input type="checkbox"checked={!!none[field]}onChange={e=>{setNone({...none,[field]:e.target.checked});setConfirm(false)}}/>{field==='DATE'?'No date is committed':`No ${field.toLowerCase()} is committed`}</label></div>)}{blockedLineage&&<div className="withdrawn">This draft references withdrawn context. Generate a new draft before approval.</div>}{blockedTerms.length>0&&<div className="error">Remove internal terms before release: {blockedTerms.join(', ')}</div>}<label>Exact text that Sales will receive</label><pre className="release-preview">{approved}</pre><label className="confirm"><input type="checkbox"checked={confirm}onChange={e=>setConfirm(e.target.checked)}/>I approve this exact text for Sales.</label><div className="button-row"><button className="button primary"disabled={busy||!confirm||!approved.trim()||unresolved||blockedTerms.length>0||blockedLineage}onClick={()=>void onApprove(approved)}>Approve and release to Sales</button><button className="button"disabled={busy}onClick={onReject}>Reject</button></div></>:<p className="preserve">{r.text}</p>}</div>
 }
 function Inspector({
   data,
@@ -1079,6 +1031,7 @@ function Operator() {
               <span>#{r.seq}</span>
               <Badge mask={r.labels_mask} />
               <span>{r.type}</span>
+              <span>Eng: {(r.labels_mask&~1)===0?'✓':'—'} · Sales: {(r.labels_mask&~2)===0?'✓':'—'}</span>
               <span>{r.text}</span>
             </div>
           ))}
@@ -1086,26 +1039,5 @@ function Operator() {
     </section>
   );
 }
-const demo = location.pathname === "/demo";
-createRoot(document.getElementById("root")!).render(
-  demo ? (
-    <>
-      <div className="demo-banner">
-        <strong>Relay multiplayer demo</strong>
-        <span>
-          Two independent principals. Two team agents. One controlled boundary.
-        </span>
-        <a href="/">Single workspace ↗</a>
-      </div>
-      <div className="demo-grid">
-        <RelayPane initialUser="priya" split />
-        <RelayPane initialUser="ava" split />
-      </div>
-      {new URLSearchParams(location.search).get("operator") === "1" && (
-        <Operator />
-      )}
-    </>
-  ) : (
-    <RelayPane initialUser="priya" />
-  ),
-);
+function Demo(){const[sales,setSales]=useState<Session|null>(null),[eng,setEng]=useState<Session|null>(null),[channels,setChannels]=useState<Channel[]>([]),[channel,setChannel]=useState(''),[error,setError]=useState(''),[theme,setTheme]=useState(localStorage.getItem('relay-theme')||'light'),[reset,setReset]=useState(false);const refresh=useCallback(()=>{if(sales)void request<Channel[]>('/channels',sales.token).then(cs=>{setChannels(cs);setChannel(current=>cs.some(c=>c.id===current)?current:cs[0]?.id||'')})},[sales]);useEffect(refresh,[refresh]);useStream(sales?.token,refresh,()=>{});useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('relay-theme',theme)},[theme]);async function control(path:string,body:unknown){if(!eng)return;try{const data=await request<{channel_id?:string}>(path,eng.token,body);if(data.channel_id)setChannel(data.channel_id);refresh();setReset(false)}catch(e){setError((e as Error).message)}}return <><header className="demo-header"><a className="brand"href="/demo">relay<span>✳</span></a><select aria-label="Shared demo channel"value={channel}onChange={e=>setChannel(e.target.value)}>{channels.map(c=><option key={c.id}value={c.id}>{c.name}</option>)}</select><span className="header-caption">Sales ↔ Engineering · Human-controlled sharing</span><button className="button"disabled={!eng||!channel}onClick={()=>void control('/demo/merge',{channel_id:channel})}>＋ Simulate a new customer-facing merge</button><a className="button"href={location.search.includes('operator=1')?'/demo':'/demo?operator=1'}>Operator view</a><button className="button"onClick={()=>setTheme(theme==='light'?'dark':'light')}>{theme==='light'?'☾ Dark':'☀ Light'}</button><button className="button"disabled={!eng}onClick={()=>setReset(true)}>Reset</button></header><div className="policy-banner"><strong>Agents draft. Humans approve.</strong> Engineering answers cross teams only after an engineer approves the exact text. Reps confirm escalations. Agents never fill in dates.</div>{error&&<div className="error">{error}</div>}<div className="demo-grid"><RelayPane initialUser="priya"split onSession={setSales}channelOverride={channel}releaseToken={eng?.token}/><RelayPane initialUser="ava"split onSession={setEng}channelOverride={channel}/></div>{new URLSearchParams(location.search).get('operator')==='1'&&<Operator/>}{reset&&<div className="modal-backdrop"><section className="modal"><button className="close"onClick={()=>setReset(false)}>×</button><h2>Reset the demo?</h2><p>This retires current channels and seeds a fresh scenario. Audit history remains append-only.</p><button className="button primary"onClick={()=>void control('/demo/reset',{})}>Confirm demo reset</button></section></div>}</>}
+createRoot(document.getElementById('root')!).render(location.pathname==='/demo'?<Demo/>:<RelayPane initialUser="priya"/>);

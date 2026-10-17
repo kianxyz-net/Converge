@@ -270,6 +270,7 @@ app.post(
 app.post(
   "/api/documents/:id/release",
   wrap((req, res, p) => {
+    requireEngineer(p);
     const v = z
       .object({ confirmed: z.literal(true), text_hash: z.string() })
       .strict()
@@ -291,6 +292,7 @@ app.get(
 app.post(
   "/api/releases/:id/approve",
   wrap((req, res, p) => {
+    requireEngineer(p);
     const v = z
       .object({ text, text_hash: z.string(), expected_hash: z.string() })
       .strict()
