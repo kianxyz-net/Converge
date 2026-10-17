@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./negotiation.css";
+import "./style.css";
+import { AttacksPanel } from "./attacks-panel";
 type Source = {
   id: string;
   kind: string;
@@ -1148,4 +1150,6 @@ function DecisionModal({
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  location.pathname === "/attacks" ? <AttacksPanel /> : <App />,
+);
