@@ -22,3 +22,5 @@ H4. Drafted -> staged -> approved. Only human approval creates a shared record. 
 H5. Retraction is a new append-only event. Withdrawn records and their derived context are excluded from future retrieval; the UI explains that earlier deliveries cannot be unsent.
 
 High-risk backstop: normalize agent-drafted dates, prices, SLAs, availability and commitments to [DATE], [PRICE], [SLA], [AVAILABILITY]. Track high_risk_fields. Reject approval with unresolved placeholders or internal terms. Convert unsupported Sales-facing high-risk claims to needs_escalation. Never auto-fill a date in an agent draft.
+
+Artifact catalogs and histories must be projections through visibility.ts with an explicit principal. Never count hidden revisions or expose private source content through released-artifact metadata. Audit source/manifest/history inspection without recording source text. Preserve independent review authority and clearance. No generated-code runtime in this slice.
