@@ -52,6 +52,13 @@ const wrap =
       res.status(401).json({ error: "Select a demo identity first" });
       return;
     }
+    // Negotiation sessions cannot use the archived dashboard's privilege exchanges.
+    if (["business", "technical"].includes(p.team_id)) {
+      res
+        .status(403)
+        .json({ error: "Use the negotiation API for this demo identity" });
+      return;
+    }
     Promise.resolve()
       .then(() => fn(req, res, p))
       .catch(next);

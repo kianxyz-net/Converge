@@ -373,7 +373,9 @@ export async function draft(p: Principal, request: string, topicId?: string) {
     fail("This agent is already preparing a draft", 409);
   const shared = records(p).filter(
     (e) =>
-      e.labels_mask === 0 && ["neg_proposal", "neg_human"].includes(e.type),
+      e.labels_mask === 0 &&
+      !e.withdrawn &&
+      ["neg_proposal", "neg_human"].includes(e.type),
   );
   const current = shared.find((e) => e.type === "neg_proposal");
   if (topicId && !shared.some((e) => e.meta.topic_id === topicId))
@@ -381,8 +383,6 @@ export async function draft(p: Principal, request: string, topicId?: string) {
   if (!topicId && current) topicId = String(current.meta.topic_id);
   if (!topicId && team !== "B")
     fail("Business must open the collaboration topic first", 409);
-  if (shared.filter((e) => e.type === "neg_proposal").length >= 3)
-    fail("Three proposal rounds complete. Prepare a joint decision.", 409);
   if (
     /(?:reveal|print|show|ignore|dump|expose|give me|read).*(?:private|notes|rules|system|instructions|dataset)/i.test(
       request,
@@ -398,6 +398,8 @@ export async function draft(p: Principal, request: string, topicId?: string) {
       meta: { status: "declined" },
     });
   }
+  if (shared.filter((e) => e.type === "neg_proposal").length >= 3)
+    fail("Three proposal rounds complete. Prepare a joint decision.", 409);
   const available = selectEvidence(sources(p), request, team),
     id = topicId || randomUUID(),
     a = agent(team);
