@@ -1,3 +1,4 @@
+import '../config.js';
 import Database from 'better-sqlite3';
 import {mkdirSync} from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
 export const hash=(s:string)=>createHash('sha256').update(s).digest('hex');
@@ -5,6 +6,7 @@ const filename=process.env.DATABASE_PATH||'.data/relay.sqlite';if(filename!==':m
 export const db=new Database(filename);db.pragma('journal_mode = WAL');db.pragma('foreign_keys = ON');
 try{db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS fts_probe USING fts5(text); DROP TABLE fts_probe')}catch{throw Error('SQLite FTS5 is required and unavailable')}
 db.exec(`
+CREATE TABLE IF NOT EXISTS token_sessions(token_hash TEXT PRIMARY KEY,principal_id TEXT);
 CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY,label TEXT,bit INTEGER);
 CREATE TABLE IF NOT EXISTS principals(id TEXT PRIMARY KEY,kind TEXT,name TEXT,team_id TEXT,clearance_mask INTEGER,authority_mask INTEGER,token_hash TEXT);
 CREATE TABLE IF NOT EXISTS channels(id TEXT PRIMARY KEY,name TEXT,account TEXT,created_by TEXT);
