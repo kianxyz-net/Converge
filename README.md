@@ -73,7 +73,9 @@ python3 scripts/browser-rehearsal.py
 
 The browser script uses an isolated temporary profile and only port 4181. It publishes demo content and resets that scratch workspace. Never point it at an active user workspace. `RELAY_BROWSER_PATH` can select another Chrome executable. Concurrent dev servers may log a Vite HMR-port warning; the HTTP flow remains functional.
 
-`eval:attacks` retains the older 35-scenario REST/MCP regression harness; use `ATTACK_RESULTS_PATH=.data/attack-results.json` to preserve historical results. The previous negotiation implementation/tests remain internally, with its UI archived in `web/negotiation-main.tsx`. It is not the active demo. No old dashboard/operator privilege exchange is available to handoff session tokens.
+`eval:attacks` retains the older 35-scenario REST/MCP regression harness; use `ATTACK_RESULTS_PATH=.data/attack-results.json` to preserve historical results. The merged `/attacks` route preserves your historical report as a clearly labeled archive. Its requests are served through an authenticated endpoint with synthetic canary markers redacted, while the full original results remain unchanged on disk. It is loaded separately from the primary app and does not replace live Security-tab checks.
+
+The previous negotiation implementation/tests remain internally, with its UI archived in `web/negotiation-main.tsx`. It is not the active demo. No old dashboard/operator privilege exchange is available to handoff session tokens.
 
 ## Optional real model
 

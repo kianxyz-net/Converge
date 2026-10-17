@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { fromToken, issueToken, requireHuman } from "./auth.js";
@@ -34,6 +35,18 @@ export function mountHandoff(app: Express) {
     } catch (e) {
       next(e);
     }
+  });
+  route("get", "/history-attacks", (_req, res, _p) => {
+    // Preserve the user's full report on disk; do not ship synthetic private markers to browsers.
+    const raw = readFileSync(
+      new URL("../eval/results.json", import.meta.url),
+      "utf8",
+    );
+    res.json(
+      JSON.parse(
+        raw.replace(/CANARY-[A-Z0-9-]+/g, "[synthetic marker redacted]"),
+      ),
+    );
   });
   route("get", "/state", (_req, res, p) => res.json(h.snapshot(p)));
   route("get", "/sources/:id", (req, res, p) => {

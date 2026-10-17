@@ -193,6 +193,12 @@ test("HTTP identity, source, hash and authority overrides are rejected", async (
       assert.equal(r.status, 404);
       assert.ok(!JSON.stringify(r).includes("CANARY"));
     }
+    const historical = await call("/api/handoff/history-attacks");
+    assert.equal(historical.status, 200);
+    assert.ok(historical.body.attempts > 0);
+    assert.ok(!JSON.stringify(historical.body).includes("CANARY-"));
+    assert.deepEqual(h.snapshot(sales).internal_terms, []);
+    assert.ok(h.snapshot(eng).internal_terms.length > 0);
     const overridden = await call(
       "/api/handoff/state?team=infra&clearance_mask=7",
     );

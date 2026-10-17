@@ -10,6 +10,7 @@ import {
   releaseProblem,
   outboundScan,
   normalizeDraft,
+  internalTerms,
 } from "./security.js";
 import type { Principal, RecordRow, Release } from "./types.js";
 export const identities = [
@@ -575,6 +576,7 @@ export function snapshot(p: Principal, channel = currentChannel()) {
   scope(p);
   return {
     run_id: channel,
+    internal_terms: p.team_id === "eng" ? internalTerms() : [],
     team: p.team_id,
     principal: p.name,
     can_review:

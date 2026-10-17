@@ -106,7 +106,10 @@ try:
  click('↻ Reset demo');click('Reset demo');wait("!document.querySelector('.modal-shade')")
  assert js("document.querySelectorAll('.artifact').length===0")
  click('On-prem launch date ↗');wait("document.querySelector('.status')?.textContent.includes('Needs escalation')")
- print(json.dumps({'browser':'Chrome headless','rateLimitAnswerAndCitations':True,'explicitEscalation':True,'engineeringReview':True,'editInvalidatesApproval':True,'exactReleaseAndSalesFollowup':True,'eightSecurityScenarios':'8 passed','extractionDeclined':True,'infrastructureReadOnly':True,'mobileOverflow':False,'resetRestoresInitialFlow':True}))
+ call('Page.navigate',{'url':'http://127.0.0.1:4181/attacks'})
+ wait("document.body.textContent.includes('recorded attempts')")
+ assert js("document.body.textContent.includes('HISTORICAL HARNESS REPORT') && !/CANARY-(?:ENG|SALES|INFRA)-/.test(document.body.textContent)")
+ print(json.dumps({'browser':'Chrome headless','rateLimitAnswerAndCitations':True,'explicitEscalation':True,'engineeringReview':True,'editInvalidatesApproval':True,'exactReleaseAndSalesFollowup':True,'eightSecurityScenarios':'8 passed','extractionDeclined':True,'infrastructureReadOnly':True,'mobileOverflow':False,'resetRestoresInitialFlow':True,'historicalReportPreservedAndRedacted':True}))
 finally:
  os.killpg(p.pid,signal.SIGTERM)
  try:p.wait(timeout=5)

@@ -1,6 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./handoff.css";
+// Load the user's historical report only on its explicit archive route.
+const HistoricalAttackReport = React.lazy(() =>
+  import("./attacks-panel").then((module) => ({
+    default: module.AttacksPanel,
+  })),
+);
+
 type Source = {
   id: string;
   source_id: string;
@@ -27,6 +34,7 @@ type Draft = {
 };
 type Snapshot = {
   run_id: string;
+  internal_terms: string[];
   team: string;
   principal: string;
   can_review: boolean;
@@ -684,6 +692,7 @@ function App() {
                     <Review
                       key={d.id}
                       draft={d}
+                      terms={state.internal_terms}
                       token={token}
                       onUpdated={refresh}
                       onInspect={(id) => void inspect(id)}
@@ -896,11 +905,13 @@ function SourceDetail({
 }
 function Review({
   draft: d,
+  terms,
   token,
   onUpdated,
   onInspect,
 }: {
   draft: Draft;
+  terms: string[];
   token: string;
   onUpdated: () => Promise<void>;
   onInspect: (id: string) => void;
@@ -911,7 +922,9 @@ function Review({
     [error, setError] = useState("");
   const dirty = text !== d.text,
     placeholders = /\[(DATE|PRICE|SLA|AVAILABILITY)\]/.test(text),
-    internal = /Basalt|CANARY-/i.test(text);
+    internal =
+      /CANARY-/i.test(text) ||
+      terms.some((term) => text.toLowerCase().includes(term.toLowerCase()));
   useEffect(() => {
     setText(d.text);
     setAck(false);
@@ -1061,4 +1074,12 @@ function Review({
     </article>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  location.pathname === "/attacks" ? (
+    <React.Suspense fallback={<p>Loading historical report…</p>}>
+      <HistoricalAttackReport />
+    </React.Suspense>
+  ) : (
+    <App />
+  ),
+);
