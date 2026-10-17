@@ -2,11 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 process.env.DATABASE_PATH = ":memory:";
 process.env.LLM_MODE = "offline";
+process.env.AGENT_MODE = "rules";
+process.env.LOG_PROMPTS = "true";
 const { seed } = await import("../server/seed.js");
 const { db, principal, hash } = await import("../server/store/db.js");
 const core = await import("../server/core.js");
 const store = await import("../server/store/visibility.js");
-const { turn } = await import("../server/agents/turn.js");
+const { turn, confirmEscalation } = await import("../server/agents/turn.js");
 seed();
 const eng = principal("ava")!,
   sales = principal("priya")!;
@@ -25,7 +27,7 @@ test("documents and exact-text answer releases complete the full question workfl
     "northwind-priya",
     "What is the enterprise sustained rate limit?",
   );
-  assert.match(answer.text, /600/);
+  assert.match(answer.text, /5,000/);
   assert.ok(answer.refs.length);
   const unknown = await turn(
     sales,
@@ -33,7 +35,10 @@ test("documents and exact-text answer releases complete the full question workfl
     "What is the on-prem plan?",
   );
   assert.equal(unknown.meta.status, "needs_escalation");
-  const release = core.pending(eng).find((r) => r.state === "pending")!;
+  assert.equal(core.pending(eng).filter((r) => r.state === "staged").length, 0);
+  const proposal = unknown.meta.escalation as { id: string; text_hash: string };
+  await confirmEscalation(sales, proposal.id, proposal.text_hash);
+  const release = core.pending(eng).find((r) => r.state === "staged")!;
   assert.ok(release);
   assert.equal(core.pending(sales).length, 0);
   assert.throws(
@@ -104,4 +109,20 @@ test("document release preserves exact uploaded bytes rather than overlapping ch
     core.documents(sales, "northwind").some((d) => d.id === id),
     false,
   );
+});
+test("document releases also enforce internal-term and unresolved-placeholder rules", () => {
+  for (const text of [
+    "Internal Basalt notes",
+    "CANARY-ENG-7F3A",
+    "Ship date: [DATE]",
+  ]) {
+    const id = core.upload(eng, "northwind", "blocked.md", text);
+    assert.throws(
+      () => core.releaseDocument(eng, id, true, hash(text)),
+      /internal|placeholder/,
+    );
+    assert.ok(
+      !core.documents(sales, "northwind").some((d) => d.released_from === id),
+    );
+  }
 });

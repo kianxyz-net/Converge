@@ -1,10 +1,10 @@
 # Relay
 
-A multi-team agent workspace for Acme Cloud API. Sales reps talk to their Sales agent. Engineers talk to their Engineering agent. Engineering-only information reaches Sales through explicit, exact-text human releases.
+A shared knowledge and artifact workspace for teams and their agents. Share cited answers and documents while retaining control over private sources. The first workflow connects Engineering and Sales through exact-text, human-approved releases. Agents draft; people decide what crosses teams.
 
 ## Run in three commands
 
-Requires Node.js 20.12+ and pnpm. Run from this repository checkout:
+Node.js 20.12+ and pnpm are required. From this checkout:
 
 ```sh
 pnpm install
@@ -12,89 +12,114 @@ pnpm seed
 pnpm dev
 ```
 
-Open **http://127.0.0.1:4173/demo** for Priya (Sales) and Ava (Engineering) side by side. Open **http://127.0.0.1:4173/demo?operator=1** to add the clearly marked full-clearance operator log. `/` is the single-person workspace with Ava, Priya, and Ben in the identity switcher.
+Open **http://127.0.0.1:4173/demo**: Sales chat on the left, a shared thread in the middle, Engineering chat and release review on the right. Narrow screens stack the columns. `/` is the single-user workspace with a demo identity switcher. The demo header includes merge simulation, GitHub sync, channel creation, operator view, theme toggle, and reset.
 
-The demo works without API keys using deterministic, source-grounded answers and GitHub fixtures. This mode is labeled in the UI and answer manifests. It runs the actual database, label enforcement, retrieval, questions, release approvals, digests, SSE and MCP tools; it does not pretend to call a model.
+Rules mode works offline with fixtures and no API keys. Both modes execute the real SQLite, label filtering, retrieval, approvals, digests and MCP services.
 
 ```sh
 pnpm check       # strict TypeScript
-pnpm test        # isolation, workflow, REST/SSE and MCP client integration
-pnpm eval        # 20 offline cases, pass rate per class and leak count
+pnpm test        # isolation, HITL, rules parity, HTTP/SSE and MCP clients
+pnpm eval        # 24 cases, useful-answer/escalation rates and safety counters
+ATTACK_RESULTS_PATH=.data/attack-results.json pnpm eval:attacks # scoped REST/MCP attacks
 pnpm build       # React production bundle; no deployment
+pnpm demo:reset  # append-only reset: retires old channels and seeds a fresh one
 ```
 
-Tests start a temporary loopback server. Stop the running app before `pnpm demo:reset`, then restart `pnpm dev`. Reset wipes the SQLite file and reseeds; ordinary `pnpm seed` is idempotent.
+`pnpm seed` is idempotent. Reset never deletes or changes events. It excludes old channels from future context and creates a fresh active scenario. The in-app reset updates both panes live; a script reset is picked up by SSE polling. Historical records remain available to authorized inspection.
 
-## Four-minute demonstration
+## The human approval boundary
 
-See [DEMO.md](DEMO.md). The initial two Engineering docs are private. Release them as Ava, ask source-grounded Sales questions, escalate the uncovered on-prem question, approve the exact draft, and inspect the resulting answer manifest.
+- **Sales asks:** grounded answers carry citations and a status. Unknown product claims become `needs_escalation`; the agent will not guess.
+- **Rep confirms:** an exact-question card offers **Send to Engineering** and **Cancel**. Nothing reaches Engineering and no draft job starts before confirmation. The proposed question uses only the current rep message and shared evidence, with a private-value scan.
+- **Engineering drafts:** its agent uses Engineering-visible records. Dates, pricing, SLAs and availability use `[DATE]`, `[PRICE]`, `[SLA]`, `[AVAILABILITY]` placeholders and `high_risk_fields`.
+- **Engineer approves:** the draft is editable. Dates require a date input or **No date is committed**; other high-risk fields also require a human value or no commitment. Internal terms show a warning and disable approval. The exact resolved text is previewed and hashed.
+- **Server enforces:** human-only scoped tokens, source-label authority, no unresolved placeholders, no configured internal terms, exact-text hash and stale-draft binding. Approval creates an eng-only declassify audit and a new shared answer; originals remain unchanged. The rep receives “Engineering answered (approved by Ava): …” with a citation.
+- **Reject or retract:** rejection leaves the question open with a visible note. Retraction appends a notice and excludes the released record, dependent chunks, answers and summaries from future context/retrieval. It cannot unsend content already delivered.
 
-## Environment and live adapters
+Humans can also post an exact shared message after checking **Both teams will see this exact message**. Private agent chat remains separate.
 
-Optional: copy `.env.example` to `.env`; it is loaded automatically. Defaults work offline.
+## Demo evidence
 
-- `DATABASE_PATH=.data/relay.sqlite` — SQLite WAL database, ignored by Git.
-- `PORT=4173`, `HOST=127.0.0.1` — local server. Binding to a LAN interface is optional; everyone must reach the same trusted demo server.
-- `ANTHROPIC_API_KEY` — enables the Anthropic adapter unless `LLM_MODE=offline`.
-- `ANSWER_MODEL=claude-sonnet-5-5`, `SUMMARY_MODEL=claude-haiku-5-5` — task-specified defaults, not verified against a live account. Override with model identifiers available to your account.
-- `USE_FIXTURES=true` — fixture PRs. Set false with `GITHUB_REPO=owner/repo` and optionally `GITHUB_TOKEN` for Octokit REST; live failures fall back to fixtures with a returned warning.
-- `LOG_PROMPTS=true` — stores prompt text in local `llm_calls`; false retains hashes and usage only.
-- `AUTO_RELEASE_QUESTIONS=true` — auto-releases sanitized current questions. False keeps them team-private and does not dispatch an Engineering job.
-- `ENABLE_DEMO_OPERATOR=true` — allows the explicit full-clearance demo operator endpoint. Set false to disable.
+The active Northwind channel contains:
 
-The Anthropic adapter uses tool calling, a forced `respond` tool for final output, citation checks, outbound validation and one transient retry. No reply tokens are streamed. Only retrieving/drafting/validating statuses stream before the validated record is delivered. `EVAL_LIVE=true pnpm eval` exercises the configured live adapter and can incur API charges; the reported default evaluation results are offline.
+- Engineer brief about enterprise rate-limit behavior.
+- Released enterprise documentation: **5,000 requests/min per API key**, bursts up to **2x for 10 seconds**.
+- PR #412: per-key limits and HTTP 429 `Retry-After`; fixture data includes eight merged PRs, three customer-facing, and private open PR #419.
+- Engineering-only on-prem note: uncommitted Q1 target, Basalt codename and Engineering canary.
+- Sales-only signing condition and Sales canary.
+- Two private documents ready for engineer release, plus a released injection-test document.
 
-## Labels and release boundary
+Expected rules-mode outcomes: enterprise limits and Retry-After answer with citations; on-prem stages escalation; Priya can answer when Northwind will sign from Sales-only context, while Engineering returns insufficient context; extraction attempts are declined. Isolation is between teams, not between people on a team. Product claims require released evidence; an internal customer-signing answer can cite its own team’s private note without sharing it.
 
-`shared=0`, `eng=1`, `sales=2`; visibility is `(labels & ~clearance) === 0`. All protected-table SQL is confined to `server/store/visibility.ts`. Search filters labels and BM25 ranks in a single FTS5 SQL query. Tools close over the authenticated principal; models cannot supply a principal or mask. Documents are untrusted and cannot grant access.
+## Environment and models
 
-User chats remain team-labeled. Shared channel threads contain released records, safe questions, briefs and shipped digests. Engineers edit and approve exact answer text, bound by SHA-256 and a stale-draft hash. Approval creates a new shared record, never changes the private original, and posts an answer built only from that released record to the asking rep. Documents require a separate explicit confirmation and create shared chunk copies.
+Optionally copy `.env.example` to `.env`; it loads automatically.
 
-Teammates intentionally share team-level clearance. Personal conversation routes additionally require the conversation owner. Demo identity selection is not production authentication. The operator endpoint is intentionally omniscient and unauthenticated at issuance, like the user switcher; it is a demo control, not a tenant boundary.
+| Variable | Behavior |
+|---|---|
+| `AGENT_MODE=rules` | Deterministic keyword retrieval and grounded templates; default, no API key. |
+| `AGENT_MODE=llm` | Anthropic tool loop and forced `respond`; requires `ANTHROPIC_API_KEY`. |
+| `ANSWER_MODEL` / `SUMMARY_MODEL` | Defaults `claude-sonnet-5-5` / `claude-haiku-5-5`, as specified. Override for your account. |
+| `LOG_PROMPTS=true` | Store prompts in local `llm_calls`; otherwise only hashes and usage. |
+| `INTERNAL_TERMS` | Comma-separated release blocklist; defaults to Basalt and the Engineering canary. Served only to Engineering UI tokens. |
+| `USE_FIXTURES=true` | Offline GitHub data; false uses Octokit with `GITHUB_REPO` and optionally `GITHUB_TOKEN`. Errors fall back explicitly to fixtures. |
+| `DATABASE_PATH` | Default `.data/relay.sqlite`, SQLite WAL with startup FTS5 verification. |
+| `PORT` / `HOST` | Default `4173` / `127.0.0.1`. |
+| `ENABLE_DEMO_OPERATOR` | Default enabled. Set false to disable operator token issuance. |
 
-## MCP
+There is **no auto-release configuration**. A model tool can only propose escalation. A server backstop converts uncited dates, prices, percentages and availability claims in Sales-facing output to escalation; Engineering drafts normalize high-risk facts to placeholders. Model responses are validated as a whole; SSE streams statuses and validated records, never raw reply tokens.
 
-Streamable HTTP endpoint: `http://127.0.0.1:4173/mcp` (POST, stateless). Obtain a user token through:
+## Labels, lineage and inspector
+
+Shared=0, eng=1, sales=2. Visibility is `(labels & ~clearance) === 0`. Only `server/store/visibility.ts` contains SQL for events, chunks or search. FTS5 filters clearance and withdrawals in the ranking query. Context labels union every actual input; tools cannot supply a principal or mask. Source lineage invalidates derived records after retraction.
+
+“Why this answer” shows allowed labels, context records, tool calls, citation validation, scan result, output labels, model mode and latency. With `/demo?operator=1`, a clearly marked operator table shows all event records, their labels and visibility to each team. Operator mode intentionally has full clearance and is a demo feature, not production authentication.
+
+## MCP and scoped tokens
+
+Streamable HTTP: `http://127.0.0.1:4173/mcp` (stateless POST). First use `/api/auth/switch` to select a demo user, then exchange that UI token for a restricted token:
 
 ```sh
 curl -s http://127.0.0.1:4173/api/auth/switch \
   -H 'Content-Type: application/json' -d '{"user_id":"priya"}'
+
+curl -s http://127.0.0.1:4173/api/auth/mcp-token \
+  -H 'Authorization: Bearer <UI_TOKEN>' -H 'Content-Type: application/json' -d '{}'
 ```
 
-Configure your MCP client with `Authorization: Bearer <token>`. Tools: `ask_team_agent`, `get_delta`, `search_context`, `list_open_questions`, `list_pending_releases` (Engineering only). There is deliberately no approve-release tool. The sales-token tests use both SDK in-memory and actual Streamable HTTP clients with adversarial queries.
+Configure MCP with `Authorization: Bearer <MCP_TOKEN>`. MCP tokens resolve to agent-kind principals with no release authority, including when used against REST. Plain UI tokens are rejected at `/mcp`; this avoids treating model calls as human approvals. Demo identity issuance itself is intentionally not production auth.
 
-Stdio uses the same database and services:
+Tools: `ask_team_agent`, `get_delta`, `search_context`, `list_open_questions`, `list_pending_releases` (Engineering only). No approve, release, confirm escalation or retract tools.
 
 ```sh
-RELAY_TOKEN=<user-token> pnpm mcp:stdio
+RELAY_TOKEN=<MCP_TOKEN> pnpm mcp:stdio
 ```
 
-MCP runs a principal-scoped service instance. HTTP sessions stream no model tokens. Stdio processes should not be run concurrently with write-heavy dev sessions: per-conversation queues are in-process, as specified.
+HTTP and stdio use the same services and store. Per-conversation queues are in-process, so run one application writer for the demo; external stdio writes are picked up by SSE polling but do not share an in-memory queue with the web process.
 
-## Team scripts
+## Connector scripts
 
-Connector tokens are seeded demo credentials, not GitHub or model credentials. `engineering-files` uses `demo-eng-connector` (forced eng); `sales-files` uses `demo-sales-connector` (forced sales). A JSON input may include `channel_id` and `text`; plain text defaults to the Northwind channel. Any content-supplied labels are ignored.
+Registered demo connector tokens: `engineering-files` → `demo-eng-connector` (forced eng); `sales-files` → `demo-sales-connector` (forced sales). Upload-supplied labels are ignored. Plain text defaults to the active demo channel; JSON may specify `channel_id` and `text`.
 
 ```sh
 node --import tsx scripts/ingest.ts --connector engineering-files --file ./fixtures/documents/rate-limits.md --token demo-eng-connector
-node --import tsx scripts/export.ts --team sales --token <sales-user-token>
+node --import tsx scripts/export.ts --team sales --token <USER_OR_MCP_TOKEN>
 ```
 
-Exports require clearance for the requested label, include only that label’s visible records, log each call, and allow 30 calls per principal per minute. `RELAY_URL` overrides the loopback URL.
+`RELAY_URL` overrides the loopback URL. Exports require the requested team’s clearance, log each call and rate-limit to 30/minute. Historical withdrawn records remain explicitly marked in authorized exports.
 
-## Layout
+## Files and limitations
 
-- `server/`: Express API, agent loop, Anthropic adapter, GitHub/ingest connectors, SQLite gateway.
-- `web/`: React + Vite + Tailwind interface and split demo.
-- `mcp/`: Streamable HTTP and stdio transports sharing REST service functions.
-- `fixtures/`: two private Markdown docs, 8 merged PRs (3 customer-facing), and 1 private open PR.
-- `test/`, `eval/`: boundary tests and 20 evaluation cases.
-- [DESIGN.md](DESIGN.md), [AGENTS.md](AGENTS.md): decisions and enforced invariants.
+[DESIGN.md](DESIGN.md) records decisions; [AGENTS.md](AGENTS.md) contains invariants; [DEMO.md](DEMO.md) is the four-minute presentation script. `server/`, `web/`, `mcp/`, `scripts/`, `fixtures/`, `test/`, and `eval/` contain the implementation.
 
-## Scope and verification limits
+No deployment, production auth, multi-tenancy, PDF, embeddings, billing, branching or second-approver workflow. Fixture SHAs/URLs are illustrative. The Anthropic SDK is tested against a local HTTP mock for retries, scoped tools, structured output and high-risk backstops; real model/account access and live GitHub credentials remain unverified. Browser visual QA is unavailable in this environment.
 
-Markdown/text uploads only. No PDF, embeddings, billing, conversation branching, real auth, multi-tenancy or deployment. Fixture GitHub URLs and SHAs are illustrative; they are not evidence of live changes. Arbitrary product questions outside the offline rules escalate rather than fabricate answers. The live Anthropic and GitHub adapters require credentials and were not verified against external accounts.
+Fingerprint scanning is defense in depth, not proof against all paraphrases. Authorized human releases still reveal information, bounded by the human decision and five-draft cap. No claim of production security certification is made.
 
-Isolation is the primary boundary; outbound fingerprint scanning is defense in depth and cannot prevent every paraphrase. Authorized humans can explicitly release sensitive text. This local demo is not production security certification. The server is single-process; event ordering and SSE resume are persisted, while live job queues are in-memory.
+## Artifact workspace
 
-GitHub is the primary source repository. The old static Accord implementation has been removed from this checkout. Existing hosted static prototypes are unchanged; no deployment work is performed for this task.
+Open **Library** beside Activity: visible answers, updates, document uploads and released copies show stable ID, owner, audience, lifecycle status, version, timestamp and SHA-256. Open an artifact or its **History** to inspect permitted approval/source events. Private document revisions are not counted in Sales' versions. Answers are immutable v1 releases; a revised answer is a new release. Sources remain independently permission checked. Retractions stay visible as history while excluded from future retrieval.
+
+**Approvals** is the Engineering review queue; **Docs** retains upload, chunk preview and exact-text release. The operator view requires an Engineering human UI token exchange and can be disabled with `ENABLE_DEMO_OPERATOR=false`. Demo identity switching is still freely selectable and is not real authentication. Record, manifest and artifact-history inspection attempts are audited by principal/action/ID, including denied reads, without storing source text in audit logs.
+
+No generated software is executed or hosted. The future runtime boundary and unvalidated customer/buyer hypotheses are documented in DESIGN.md.

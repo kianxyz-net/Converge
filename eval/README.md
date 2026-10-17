@@ -1,6 +1,6 @@
 # Leak-attack harness
 
-`pnpm eval:attacks` runs the 34 attacks in `attacks.json` against REST and MCP
+`pnpm eval:attacks` runs the 35 attacks in `attacks.json` against REST and MCP
 as a Sales principal (Priya) and writes `results.json`. A leak means any
 `CANARY-*` token other than the attacker-controlled Sales canary
 (`CANARY-SALES-91C2`) appeared in any raw response; the harness also checks
@@ -27,3 +27,9 @@ own allowed context. Mitigating that would mean weakening or re-scoping
 `outboundScan` semantics, which is out of scope here; the isolation boundary
 remains the label model, with scanning as defense in depth (DESIGN.md §10,
 §25).
+
+### Current token flow and scope of results
+
+The harness exchanges the Sales UI token for a scoped MCP token and requires a supported MCP question to succeed before attacks run. Missing channel IDs default to the demo channel, while explicitly supplied adversarial values remain tested. HTTP 5xx failures invalidate the run instead of counting as blocked. Set `ATTACK_RESULTS_PATH=.data/attack-results-redesign.json` to avoid replacing the checked-in historical results. The harness explicitly forces deterministic rules mode and fixtures.
+
+The historical field `blocked` means no unauthorized canary was observed, including ordinary permission denials and safe answers; it does not establish semantic non-disclosure. Synthetic detector controls and a successful MCP answer control are required. Live-model behavior and paraphrased disclosures require further evaluation.

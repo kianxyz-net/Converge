@@ -8,6 +8,7 @@ export interface Principal {
   team_id: string;
   clearance_mask: number;
   authority_mask: number;
+  scope?: "ui" | "mcp";
 }
 export interface RecordRow {
   seq: number;
@@ -22,6 +23,7 @@ export interface RecordRow {
   meta: Record<string, unknown>;
   refs: string[];
   hash: string;
+  withdrawn?: boolean;
 }
 export interface ChunkRow {
   id: string;
@@ -53,7 +55,13 @@ export interface Question {
 export interface Answer {
   answer_markdown: string;
   source_ids: string[];
-  status: "answered" | "needs_escalation" | "insufficient_context" | "declined";
+  status:
+    | "answered"
+    | "needs_escalation"
+    | "insufficient_context"
+    | "declined"
+    | "blocked";
+  high_risk_fields?: string[];
 }
 export interface Manifest {
   allowed_mask: number;

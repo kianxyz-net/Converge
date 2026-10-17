@@ -4,16 +4,32 @@ import { createServer as createViteServer } from "vite";
 import { z } from "zod";
 import { db, hash, principal } from "./store/db.js";
 import * as store from "./store/visibility.js";
-import { issueToken, fromToken, requireEngineer } from "./auth.js";
+import {
+  issueToken,
+  fromToken,
+  requireEngineer,
+  requireHuman,
+} from "./auth.js";
 import * as core from "./core.js";
-import { turn, draftQuestion } from "./agents/turn.js";
+import {
+  turn,
+  draftQuestion,
+  confirmEscalation,
+  cancelEscalation,
+} from "./agents/turn.js";
 import { subscribe, flush } from "./realtime.js";
 import type { Principal } from "./types.js";
 import { syncGitHub } from "./connectors/github.js";
 import { deliverDigest } from "./delta.js";
 import { ingest } from "./connectors/ingest.js";
+import { seed, resetDemo, activeDemoChannel } from "./seed.js";
 import { mountMcp } from "../mcp/http.js";
+import { artifacts, artifactHistory } from "./artifacts.js";
 export const app = express();
+const auditRead = (p: Principal, action: string, target: string) =>
+  db
+    .prepare("INSERT INTO audit(ts,principal_id,action) VALUES(?,?,?)")
+    .run(new Date().toISOString(), p.id, action + ":" + target);
 app.use(express.json({ limit: "2mb" }));
 app.use((req, res, next) => {
   if (
@@ -45,10 +61,18 @@ app.post("/api/connectors/:id/ingest", (req, res, next) => {
   try {
     const token = req.headers.authorization?.replace(/^Bearer /, "") || "";
     const v = z
-      .object({ channel_id: z.string(), text: z.string().min(1).max(200000) })
+      .object({
+        channel_id: z.string().optional(),
+        text: z.string().min(1).max(200000),
+      })
       .passthrough()
       .parse(req.body);
-    res.json(ingest(id(req, "id"), token, v));
+    res.json(
+      ingest(id(req, "id"), token, {
+        ...v,
+        channel_id: v.channel_id || activeDemoChannel(),
+      }),
+    );
     flush();
   } catch (e) {
     next(e);
@@ -82,7 +106,8 @@ app.get("/api/health", (_req, res) =>
   res.json({
     ok: true,
     fts5: true,
-    mode: process.env.ANTHROPIC_API_KEY ? "anthropic" : "offline",
+    mode: process.env.AGENT_MODE === "llm" ? "llm" : "rules",
+
     operatorEnabled: process.env.ENABLE_DEMO_OPERATOR !== "false",
   }),
 );
@@ -97,11 +122,16 @@ app.post("/api/auth/switch", (req, res, next) => {
     next(e);
   }
 });
-app.post("/api/auth/operator", (_req, res) => {
-  if (process.env.ENABLE_DEMO_OPERATOR === "false")
-    return res.status(403).json({ error: "Operator mode disabled" });
-  res.json(issueToken("operator"));
-});
+app.post(
+  "/api/auth/operator",
+  wrap((_req, res, p) => {
+    requireEngineer(p);
+    if (process.env.ENABLE_DEMO_OPERATOR === "false")
+      return res.status(403).json({ error: "Operator mode disabled" });
+    auditRead(p, "operator_exchange", "operator");
+    res.json(issueToken("operator"));
+  }),
+);
 app.post(
   "/api/github/sync",
   wrap(async (req, res, p) => {
@@ -148,13 +178,15 @@ app.get(
   "/api/channels",
   wrap((_req, res, p) =>
     res.json(
-      (db.prepare("SELECT * FROM channels").all() as { id: string }[]).map(
-        (c) => ({
-          ...c,
-          conversation_id:
-            p.team_id === "operator" ? null : core.myConversation(p, c.id),
-        }),
-      ),
+      (
+        db
+          .prepare("SELECT * FROM channels WHERE COALESCE(retired,0)=0")
+          .all() as { id: string }[]
+      ).map((c) => ({
+        ...c,
+        conversation_id:
+          p.team_id === "operator" ? null : core.myConversation(p, c.id),
+      })),
     ),
   ),
 );
@@ -168,12 +200,9 @@ app.post(
       .parse(req.body);
     const channelId = randomUUID();
     db.transaction(() => {
-      db.prepare("INSERT INTO channels VALUES(?,?,?,?)").run(
-        channelId,
-        v.name,
-        v.account,
-        p.id,
-      );
+      db.prepare(
+        "INSERT INTO channels(id,name,account,created_by) VALUES(?,?,?,?)",
+      ).run(channelId, v.name, v.account, p.id);
       store.append(p, {
         type: "ingest",
         channel_id: channelId,
@@ -213,8 +242,25 @@ app.post(
   }),
 );
 app.get(
+  "/api/channels/:id/artifacts",
+  wrap((req, res, p) => {
+    res.json(artifacts(p, id(req, "id")));
+  }),
+);
+app.get(
+  "/api/artifacts/:id/history",
+  wrap((req, res, p) => {
+    auditRead(p, "inspect_history", id(req, "id"));
+    const history = artifactHistory(p, id(req, "id"));
+    if (!history)
+      return res.status(404).json({ error: "Artifact not visible" });
+    res.json(history);
+  }),
+);
+app.get(
   "/api/records/:id",
   wrap((req, res, p) => {
+    auditRead(p, "inspect_record", id(req, "id"));
     const record =
       store.get(p, id(req, "id")) || store.getChunk(p, id(req, "id"));
     if (!record) return res.status(404).json({ error: "Record not visible" });
@@ -224,6 +270,7 @@ app.get(
 app.get(
   "/api/events/:id/inspect",
   wrap((req, res, p) => {
+    auditRead(p, "inspect_manifest", id(req, "id"));
     const event = store.get(p, id(req, "id"));
     if (!event) return res.status(404).json({ error: "Event not visible" });
     res.json(
@@ -268,6 +315,7 @@ app.post(
 app.post(
   "/api/documents/:id/release",
   wrap((req, res, p) => {
+    requireEngineer(p);
     const v = z
       .object({ confirmed: z.literal(true), text_hash: z.string() })
       .strict()
@@ -289,6 +337,7 @@ app.get(
 app.post(
   "/api/releases/:id/approve",
   wrap((req, res, p) => {
+    requireEngineer(p);
     const v = z
       .object({ text, text_hash: z.string(), expected_hash: z.string() })
       .strict()
@@ -335,15 +384,138 @@ app.get(
   wrap((_req, res, p) => {
     const shared = { ...p, clearance_mask: 0 };
     res.json(
-      store
-        .list(shared, { type: "declassify" })
-        .map((e) => ({
-          id: e.id,
-          channel_id: e.channel_id,
-          text: e.text,
-          meta: e.meta,
-        })),
+      store.list(shared, { type: "declassify" }).map((e) => ({
+        id: e.id,
+        channel_id: e.channel_id,
+        text: e.text,
+        meta: e.meta,
+      })),
     );
+  }),
+);
+
+app.post(
+  "/api/auth/mcp-token",
+  wrap((_req, res, p) => {
+    requireHuman(p);
+    res.json(issueToken(p.id, "mcp"));
+  }),
+);
+app.get(
+  "/api/policy",
+  wrap((_req, res, p) => {
+    if (p.team_id !== "eng") return res.json({ internalTerms: [] });
+    res.json({
+      internalTerms: (process.env.INTERNAL_TERMS || "Basalt,CANARY-ENG-7F3A")
+        .split(",")
+        .map((s) => s.trim()),
+    });
+  }),
+);
+app.post(
+  "/api/questions/escalate",
+  wrap(async (req, res, p) => {
+    requireHuman(p, p.clearance_mask);
+    const v = z
+      .object({
+        proposal_id: z.string(),
+        text_hash: z.string(),
+        confirmed: z.literal(true),
+      })
+      .strict()
+      .parse(req.body);
+    res.json(await confirmEscalation(p, v.proposal_id, v.text_hash));
+    flush();
+  }),
+);
+app.post(
+  "/api/questions/:id/cancel",
+  wrap((req, res, p) => {
+    requireHuman(p, p.clearance_mask);
+    cancelEscalation(p, id(req, "id"));
+    res.json({ ok: true });
+    flush();
+  }),
+);
+app.get(
+  "/api/escalations",
+  wrap((req, res, p) =>
+    res.json(
+      db
+        .prepare(
+          "SELECT * FROM escalation_proposals WHERE user_id=? AND channel_id=?",
+        )
+        .all(p.id, String(req.query.channel_id || "")),
+    ),
+  ),
+);
+app.post(
+  "/api/channels/:id/thread",
+  wrap((req, res, p) => {
+    requireHuman(p, p.clearance_mask);
+    const v = z
+      .object({ text, confirmed: z.literal(true) })
+      .strict()
+      .parse(req.body);
+    res.json(core.humanPost(p, id(req, "id"), v.text, v.confirmed));
+    flush();
+  }),
+);
+app.post(
+  "/api/releases/:id/retract",
+  wrap((req, res, p) => {
+    requireHuman(p);
+    res.json(core.retract(p, id(req, "id")));
+    flush();
+  }),
+);
+app.post(
+  "/api/records/:id/retract",
+  wrap((req, res, p) => {
+    requireHuman(p);
+    res.json(core.retract(p, id(req, "id")));
+    flush();
+  }),
+);
+app.post(
+  "/api/demo/reset",
+  wrap(async (_req, res, p) => {
+    requireEngineer(p);
+    const channel = resetDemo(p);
+    await syncGitHub(p, channel);
+    res.json({ channel_id: channel });
+    flush();
+  }),
+);
+app.post(
+  "/api/demo/merge",
+  wrap((req, res, p) => {
+    requireHuman(p);
+    const v = z.object({ channel_id: z.string() }).strict().parse(req.body);
+    core.channel(v.channel_id);
+    const seq =
+      store.list(p, { channel: v.channel_id, type: "pr" }).length + 420;
+    const sha = seq.toString(16).padStart(40, "0");
+    const event = store.append(p, {
+      type: "pr",
+      channel_id: v.channel_id,
+      labels_mask: 0,
+      text: `PR #${seq}: Enterprise rate-limit response diagnostics
+HTTP 429 responses include Retry-After.`,
+      meta: {
+        kind: "simulated_public_merge",
+        number: seq,
+        merged: true,
+        customer_facing: true,
+        merge_sha: sha,
+        base: "main",
+        source: "fixtures",
+        url: `https://github.com/acme/cloud-api/pull/${seq}`,
+      },
+      index: true,
+    });
+    res.json(event);
+    flush();
   }),
 );
 export const apiRoute = (
@@ -371,19 +543,17 @@ export async function finishApp(frontend = true) {
     ) => {
       const e = err as { status?: number; message?: string };
       if (res.headersSent) return;
-      res
-        .status(err instanceof z.ZodError ? 400 : e.status || 500)
-        .json({
-          error:
-            err instanceof z.ZodError
-              ? "Invalid request: " +
-                err.issues
-                  .map((x) => x.path.join(".") + " " + x.message)
-                  .join("; ")
-              : e.status
-                ? e.message
-                : "Operation failed. No unvalidated agent answer was delivered.",
-        });
+      res.status(err instanceof z.ZodError ? 400 : e.status || 500).json({
+        error:
+          err instanceof z.ZodError
+            ? "Invalid request: " +
+              err.issues
+                .map((x) => x.path.join(".") + " " + x.message)
+                .join("; ")
+            : e.status
+              ? e.message
+              : "Operation failed. No unvalidated agent answer was delivered.",
+      });
       console.error(e.message);
     },
   );

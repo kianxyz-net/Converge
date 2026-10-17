@@ -18,7 +18,7 @@ try {
   throw Error("SQLite FTS5 is required and unavailable");
 }
 db.exec(`
-CREATE TABLE IF NOT EXISTS token_sessions(token_hash TEXT PRIMARY KEY,principal_id TEXT);
+CREATE TABLE IF NOT EXISTS token_sessions(token_hash TEXT PRIMARY KEY,principal_id TEXT,scope TEXT DEFAULT 'ui');
 CREATE TABLE IF NOT EXISTS teams(id TEXT PRIMARY KEY,label TEXT,bit INTEGER);
 CREATE TABLE IF NOT EXISTS principals(id TEXT PRIMARY KEY,kind TEXT,name TEXT,team_id TEXT,clearance_mask INTEGER,authority_mask INTEGER,token_hash TEXT);
 CREATE TABLE IF NOT EXISTS channels(id TEXT PRIMARY KEY,name TEXT,account TEXT,created_by TEXT);
@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS questions(id TEXT PRIMARY KEY,channel_id TEXT,asker_i
 CREATE TABLE IF NOT EXISTS releases(id TEXT PRIMARY KEY,kind TEXT,draft_event_seq INTEGER,text TEXT,text_hash TEXT,labels_from INTEGER,labels_to INTEGER,state TEXT,approver_id TEXT);
 CREATE TABLE IF NOT EXISTS connectors(id TEXT PRIMARY KEY,name TEXT,forced_mask INTEGER,token_hash TEXT);
 CREATE TABLE IF NOT EXISTS llm_calls(id TEXT PRIMARY KEY,ts TEXT,principal_id TEXT,conversation_id TEXT,model TEXT,prompt_hash TEXT,prompt_text TEXT,in_tokens INTEGER,out_tokens INTEGER,latency_ms INTEGER);
+CREATE TABLE IF NOT EXISTS escalation_proposals(id TEXT PRIMARY KEY,channel_id TEXT,conversation_id TEXT,user_id TEXT,text TEXT,text_hash TEXT,source_id TEXT,state TEXT);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,ts TEXT,principal_id TEXT,action TEXT);
 `);
 if (
@@ -49,3 +51,17 @@ export function agentFor(p: import("../types.js").Principal) {
   if (!a) throw Error("No agent for principal");
   return a;
 }
+
+if (
+  !(db.pragma("table_info(token_sessions)") as { name: string }[]).some(
+    (c) => c.name === "scope",
+  )
+)
+  db.exec("ALTER TABLE token_sessions ADD COLUMN scope TEXT DEFAULT 'ui'");
+
+if (
+  !(db.pragma("table_info(channels)") as { name: string }[]).some(
+    (c) => c.name === "retired",
+  )
+)
+  db.exec("ALTER TABLE channels ADD COLUMN retired INTEGER DEFAULT 0");

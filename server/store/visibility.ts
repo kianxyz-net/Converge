@@ -6,7 +6,9 @@ db.exec(`CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT
 CREATE TRIGGER IF NOT EXISTS immutable_events_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT,'events are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS immutable_events_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT,'events are append-only'); END;
 CREATE TABLE IF NOT EXISTS chunks(id TEXT PRIMARY KEY,doc_id TEXT,ord INTEGER,text TEXT,labels_mask INTEGER);
-CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(text,ref_type UNINDEXED,ref_id UNINDEXED,labels_mask UNINDEXED);`);
+CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(text,ref_type UNINDEXED,ref_id UNINDEXED,labels_mask UNINDEXED);
+CREATE TABLE IF NOT EXISTS dependencies(ref_id TEXT,source_id TEXT,PRIMARY KEY(ref_id,source_id));
+CREATE TABLE IF NOT EXISTS withdrawals(ref_id TEXT PRIMARY KEY,event_id TEXT);`);
 export const visible = (mask: number, p: Principal) =>
   (mask & ~p.clearance_mask) === 0;
 const decode = (row: unknown): RecordRow => {
@@ -14,7 +16,14 @@ const decode = (row: unknown): RecordRow => {
     meta: string;
     refs: string;
   };
-  return { ...r, meta: JSON.parse(r.meta), refs: JSON.parse(r.refs) };
+  return {
+    ...r,
+    meta: JSON.parse(r.meta),
+    refs: JSON.parse(r.refs),
+    withdrawn: !!db
+      .prepare("SELECT ref_id FROM withdrawals WHERE ref_id=?")
+      .get(r.id),
+  };
 };
 export interface EventInput {
   type: string;
@@ -49,6 +58,14 @@ export function append(p: Principal, input: EventInput): RecordRow {
     db.prepare(
       "INSERT INTO search(text,ref_type,ref_id,labels_mask) VALUES(?,?,?,?)",
     ).run(input.text, "event", id, input.labels_mask);
+  const manifest = input.meta?.manifest as
+    | { record_ids_in_prompt?: string[] }
+    | undefined;
+  for (const source of new Set([
+    ...(input.refs || []),
+    ...(manifest?.record_ids_in_prompt || []),
+  ]))
+    link(p, id, source);
   return get(p, id)!;
 }
 export function get(p: Principal, id: string) {
@@ -72,6 +89,7 @@ export function list(
     type?: string;
     limit?: number;
     sharedOnly?: boolean;
+    activeOnly?: boolean;
   } = {},
 ) {
   let sql = "SELECT * FROM events WHERE (labels_mask & ~?)=0";
@@ -91,6 +109,9 @@ export function list(
     args.push(opts.after);
   }
   if (opts.sharedOnly) sql += " AND labels_mask=0";
+  if (opts.activeOnly)
+    sql +=
+      " AND NOT EXISTS(SELECT 1 FROM withdrawals w WHERE w.ref_id=events.id)";
   sql += " ORDER BY seq ASC LIMIT ?";
   args.push(opts.limit || 2000);
   return db
@@ -139,11 +160,11 @@ export const retriever: Retriever = {
     const terms = (query.match(/[\p{L}\p{N}_-]+/gu) || [])
       .filter((w) => w.length > 2)
       .slice(0, 18)
-      .map((w) => '"' + w.replaceAll('"', "") + '"');
+      .map((w) => '"' + w.replaceAll('"', "") + '"*');
     if (!terms.length) return [];
     const rows = db
       .prepare(
-        `SELECT search.text,search.ref_id AS id,CAST(search.labels_mask AS INTEGER) AS labels_mask FROM search WHERE search MATCH ? AND (CAST(search.labels_mask AS INTEGER) & ~?)=0 AND (EXISTS(SELECT 1 FROM events e WHERE e.id=search.ref_id AND e.channel_id=?) OR EXISTS(SELECT 1 FROM chunks c JOIN documents d ON c.doc_id=d.id WHERE c.id=search.ref_id AND d.channel_id=?)) ORDER BY bm25(search) LIMIT 6`,
+        `SELECT search.text,search.ref_id AS id,CAST(search.labels_mask AS INTEGER) AS labels_mask FROM search WHERE search MATCH ? AND (CAST(search.labels_mask AS INTEGER) & ~?)=0 AND NOT EXISTS(SELECT 1 FROM withdrawals w WHERE w.ref_id=search.ref_id) AND (EXISTS(SELECT 1 FROM events e WHERE e.id=search.ref_id AND e.channel_id=?) OR EXISTS(SELECT 1 FROM chunks c JOIN documents d ON c.doc_id=d.id WHERE c.id=search.ref_id AND d.channel_id=?)) ORDER BY bm25(search) LIMIT 6`,
       )
       .all(
         terms.join(" OR "),
@@ -198,4 +219,50 @@ export function assertAppendOnly(p: Principal) {
 export function assertDeleteBlocked(p: Principal) {
   const r = list(p)[0];
   db.prepare("DELETE FROM events WHERE id=?").run(r.id);
+}
+
+export function active(p: Principal, opts: Parameters<typeof list>[1] = {}) {
+  return list(p, { ...opts, activeOnly: true });
+}
+export function link(p: Principal, id: string, source: string) {
+  if (!get(p, id) && !getChunk(p, id))
+    throw Error("Dependency target not visible");
+  db.prepare("INSERT OR IGNORE INTO dependencies VALUES(?,?)").run(id, source);
+}
+export function isActive(p: Principal, id: string) {
+  return (
+    !!(get(p, id) || getChunk(p, id)) &&
+    !db.prepare("SELECT ref_id FROM withdrawals WHERE ref_id=?").get(id)
+  );
+}
+export function withdraw(p: Principal, targetId: string, noticeId: string) {
+  if (!get(p, targetId)) throw Error("Retraction target not visible");
+  const ids = db
+    .prepare(
+      "WITH RECURSIVE affected(id) AS (SELECT ? UNION SELECT d.ref_id FROM dependencies d JOIN affected a ON d.source_id=a.id) SELECT id FROM affected",
+    )
+    .all(targetId) as { id: string }[];
+  for (const { id } of ids)
+    db.prepare("INSERT OR IGNORE INTO withdrawals VALUES(?,?)").run(
+      id,
+      noticeId,
+    );
+  return ids.map((r) => r.id);
+}
+export function retireChannel(
+  p: Principal,
+  channelId: string,
+  noticeId: string,
+) {
+  for (const r of list(p, { channel: channelId, limit: 100000 }))
+    if (r.id !== noticeId) withdraw(p, r.id, noticeId);
+  for (const c of db
+    .prepare(
+      "SELECT c.id FROM chunks c JOIN documents d ON c.doc_id=d.id WHERE d.channel_id=? AND (c.labels_mask & ~?)=0",
+    )
+    .all(channelId, p.clearance_mask) as { id: string }[])
+    db.prepare("INSERT OR IGNORE INTO withdrawals VALUES(?,?)").run(
+      c.id,
+      noticeId,
+    );
 }

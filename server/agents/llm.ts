@@ -12,7 +12,9 @@ export const answerModel = () =>
 export const summaryModel = () =>
   process.env.SUMMARY_MODEL || "claude-haiku-5-5";
 export const offline = () =>
-  !process.env.ANTHROPIC_API_KEY || process.env.LLM_MODE === "offline";
+  process.env.AGENT_MODE
+    ? process.env.AGENT_MODE !== "llm"
+    : process.env.LLM_MODE !== "live";
 export function logCall(
   p: Principal,
   conversation: string,
@@ -29,7 +31,7 @@ export function logCall(
     conversation,
     model,
     hash(prompt),
-    process.env.LOG_PROMPTS === "false" ? null : prompt,
+    process.env.LOG_PROMPTS === "true" ? prompt : null,
     input,
     output,
     latency,
