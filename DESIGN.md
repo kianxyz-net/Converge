@@ -1,36 +1,30 @@
-# Relay design
+# Relay design — human-controlled sharing
 
-## Decisions made before implementation
-1. Principals are Ava (Engineering), Priya and Ben (Sales), agent-eng and agent-sales. Team members share team context and clearance. Demo identities are not production authentication.
-2. Labels are integer bitmasks: shared=0, eng=1, sales=2. `server/store/visibility.ts` is the only module allowed SQL access to events, chunks, and search. Every read and write takes a server-resolved principal; schema creation lives in that module too.
-3. One personal conversation per person/channel with their department agent. Shared channel thread contains permitted briefs, releases, questions, and digests. People never message the other department's agent directly.
-4. Digest cursors are per channel/team, advance on validated delivery, and point to the last merge SHA actually included, plus its event sequence.
-5. Shipped means merged to the default branch AND customer-facing. Connector code assigns labels; upload labels are ignored.
-6. Documents need an explicit confirm. Answers and proactive updates require exact-text approval by an engineer with authority covering all source labels. Immutable originals remain; declassification creates a new shared record and a SHA-256 binding. Questions default to auto-release using the single current rep message plus shared context, never accumulated sales context.
-7. Forced structured responses carry source ids. Invalid citations are discarded; an answered response with no valid citation becomes an escalation or insufficient context. No guessing.
-8. FTS5 BM25 filters label visibility in the retrieval SQL, top six and at most about 1,500 tokens total. A Retriever interface keeps retrieval replaceable.
-9. Summaries are per conversation/audience after twelve messages, include source sequence ranges, and union all input masks.
-10. At most five drafts per question. An engineer sees and approves the exact shared text. Residual risk: an authorized human can intentionally disclose sensitive content, and repeated paraphrases are not fully caught by outbound scanning.
-11. All text is untrusted, JSON encoded inside explicit data delimiters. Tools close over a fixed principal; the model cannot supply a principal or mask. Seeded injection text is data and has no permission effects.
-12. Offline deterministic fixture mode is the default without an API key. This mode is explicitly labeled in UI/manifests and executes real retrieval/release workflows, not fake network calls. With an API key the Anthropic adapter uses the configured models, tool calls, forced final output, usage logging and one transient retry. Model defaults are prompt-specified identifiers and may need overriding for the user's account. GitHub uses fixtures by default and falls back explicitly on live errors.
-13. Per-conversation serial queues order turns; SQLite AUTOINCREMENT orders events; SSE resumes from Last-Event-ID. WAL and FTS5 verified at startup. One Node process for this demo.
-14. Branching/carry-over is cut. New chats inherit only channel context and shared questions; no private transcript merging.
-15. Docs/repo conflict resolution is cut. Citations identify sources so humans can resolve conflicts.
+## Decisions before this revision (section 15)
+1. Principals are Ava, Priya, Ben, one agent per team, and an explicit demo operator. Clearance is team-level: isolation is between teams, not between people on one team. Personal chat routes additionally enforce ownership.
+2. Bitmasks: shared=0, eng=1, sales=2. `server/store/visibility.ts` is the sole SQL gateway for events, chunks and search. All callers supply a server-resolved principal.
+3. One chat per person/channel with that team's central agent; one shared thread per account/topic. Shared human posts are explicitly confirmed, not private chat.
+4. Delivery cursors belong to (channel, team), advance only on validated digest delivery, and carry the last included merge SHA and sequence.
+5. Shipped means merged to the default branch and labeled customer-facing. These GitHub sources are registered public inputs, not declassifications of private engineering conversations.
+6. Every private-to-shared transition is an explicit human action: rep confirms a staged escalation; engineer confirms document text or approves an answer/update. No auto-release path. Agent and MCP tokens cannot perform human actions. Declassification writes a private audit plus a separate shared record; originals remain immutable.
+7. Structured, citation-validated replies default to needs_escalation (Sales) or insufficient_context (Engineering). An unknown Sales answer only stages a confirm card; no Engineering job starts before a click.
+8. High-risk dates, prices, discounts, SLAs, availability and commitments use placeholders in Engineering drafts. Humans replace them or explicitly choose none committed. The server rejects unresolved placeholders and configurable internal terms. Sales-facing claims must match cited released evidence; private Sales deadlines may answer the person's own internal question but cannot establish a product commitment or leave the team without confirmation.
+9. FTS5 filters masks and BM25-ranks within one SQL query, top six and about 1,500 tokens. Retractions exclude sources before ranking and from every context-building path.
+10. Per-audience summaries every twelve messages, union of input labels. Retraction invalidates summaries and derived messages referencing withdrawn records, transitively, for future context; already-delivered history remains visible with a notice.
+11. Five drafts per question. Each shared answer reveals a bound; authorized human disclosure and paraphrased gradual leakage remain residual risks.
+12. Untrusted text is JSON encoded inside explicit delimiters. Tools close over fixed principals. Seeded injection text cannot grant permissions or approve anything.
+13. AGENT_MODE=rules is deterministic/offline; AGENT_MODE=llm uses Anthropic and requires a key. Unset defaults to rules. One transient retry, then a clear failure; live GitHub errors explicitly fall back to fixtures. Logging stores prompt text only when LOG_PROMPTS=true.
+14. Serial queues per conversation; SQLite AUTOINCREMENT event ordering; SSE resume by Last-Event-ID. A single Node process serves this demo.
+15. Branching/carry-over cut. No transcript copying between audiences.
+16. Docs/repo conflicts cut; citation labels identify source provenance for human review.
 
-## Assumptions and implementation boundaries
-- No deployment work. GitHub remains the source repository; local dev runs the full stack.
-- A local SQLite database stores demo data, token hashes, releases and LLM call logs. Tokens never appear in logs. Demo switcher intentionally permits choosing any named user; it is not an access boundary against an operator deliberately switching identity.
-- The server owns all tokens and principals. A separate operator principal (mask 3) is issued only by an explicit demo-operator endpoint when operator mode is enabled, and the UI only uses it with `?operator=1`. Operator mode is visibly labeled.
-- Uploaded Markdown/text only; PDF, embeddings, auth, deployment and branching are excluded.
-- Outbound scan is defense in depth. It compares unique canaries, numbers/percentages, quoted values and six-token shingles outside clearance against allowed context, rather than relying on scanning as the primary isolation boundary.
-- Engineering drafts remain eng-labeled even when they reference shared sources; human approval is the only route to Sales.
-- Team-only chats are team-visible at the record layer, as requested, but conversation routes restrict personal transcript access to the owner. No private raw chat is indexed for retrieval.
-- All manifests and tokens are checked server-side. Models cannot approve releases or choose labels.
-
-## Completed implementation notes
-- The model-facing `open_question` tool intentionally accepts no text: it requests escalation of the one current rep message, which is sanitized and scanned after final-answer validation. This is stricter than the proposed text argument and avoids pulling Sales-private history into a tool-generated question.
-- Shared shipped digests are computed from already-shared PRs only. Personal digest records retain the conversation label. The shared thread copy has no private conversation input and therefore remains mask 0; no private digest record is relabeled.
-- Live digest delivery requires a valid citation for every PR before advancing its cursor. Fixture compare SHAs are illustrative.
-- Browser rendering could not be visually verified in this environment. Strict TypeScript, production bundling, API/SSE and real MCP-client tests verify the implementation without claiming a browser screenshot check.
-- Anthropic SDK execution is verified against a local HTTP mock (transient retry, scoped tool execution, forced final `respond`, prompt logging). A real Anthropic account/model and live GitHub repo were not used.
-- `documents.original_text` is an added field that preserves exact uploaded bytes independently of overlapping retrieval chunks. Release confirmation hashes that full text; the new shared copy preserves it verbatim. Existing local databases receive a nullable-column migration.
+## Policy details and assumptions
+- Demo identity selection issues human UI tokens. MCP uses separate scoped tokens derived by the client transport boundary; their principal.kind is agent and their token scope is mcp. Even if used against REST, they cannot escalate, approve, release, retract, post shared human messages, or reset. No approval/release tools exist.
+- A date supplied by a human can be approved even when not previously published. A model must not fabricate one. Engineering drafts are normalized to placeholders and retain high_risk_fields; UI controls and server validation both enforce resolution. Configurable INTERNAL_TERMS defaults to Basalt and CANARY-ENG-7F3A.
+- Explicit demo controls simulate a public GitHub merge and reset the demo. They require UI human tokens, never a model tool. Reset is append-only logical retirement of prior channel records and reseeding a new active demo channel; no event deletion and no running-database unlink. Historical events remain inspectable to authorized principals.
+- Retraction cannot unsend a delivered message. A new append-only event marks the source withdrawn; source lineage removes derived content from future retrieval/context, including released document chunks. Users may still read their historical transcript with a withdrawn notice.
+- Documents preserve original_text separately from overlapping chunks, so release confirmation hashes exact uploaded bytes. Shared copies retain that exact text and independent chunks.
+- Rules-mode private Sales questions may cite the requesting team's private note (e.g. Northwind signing condition). Product answers remain sourced from released context. Engineering returns insufficient_context for the signing question.
+- The three-column /demo uses independently authenticated Sales chat and Engineering chat, with a shared middle thread and engineer approvals. The operator table is displayed only with ?operator=1 and explicitly shows full-clearance visibility. It is a demo control, not production authentication.
+- Light/dark mode, shared posts, document upload and release, explicit escalation cancellation, rejection and retraction are part of the vertical slice. Two-person approval is a stretch and is not exposed in the UI.
+- No deployment, real authentication, tenant isolation, PDF, embeddings, branching, mobile-specific product, or billing. Existing Anthropic model defaults are task-specified and require account verification; local SDK mocks verify mechanics, not real account availability.

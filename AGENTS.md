@@ -13,3 +13,12 @@ I10. No token streaming to clients. The full reply is validated (I9 + outbound s
 
 # Working rules
 TypeScript strict. Minimal dependencies. Every milestone runnable and committed. No deployment. Do not weaken isolation to get a demo working. Document cuts honestly and remove UI for unsupported actions.
+
+I11. Human-in-the-loop policy is non-negotiable:
+H1. Agents draft, propose and stage only. Every cross-team release, document release and escalation requires an explicit click by a human (kind=user) with authority over the source labels.
+H2. No auto-release. A rep sees and confirms the exact staged question before it reaches Engineering; question construction uses the single current rep message plus shared records, never accumulated Sales-private context, and is scanned against private values.
+H3. Human-action endpoints reject agent principals and MCP callers with 403. MCP exposes no approve, release, retract or escalation-confirm tool.
+H4. Drafted -> staged -> approved. Only human approval creates a shared record. Reject leaves the question open with a visible draft_rejected note.
+H5. Retraction is a new append-only event. Withdrawn records and their derived context are excluded from future retrieval; the UI explains that earlier deliveries cannot be unsent.
+
+High-risk backstop: normalize agent-drafted dates, prices, SLAs, availability and commitments to [DATE], [PRICE], [SLA], [AVAILABILITY]. Track high_risk_fields. Reject approval with unresolved placeholders or internal terms. Convert unsupported Sales-facing high-risk claims to needs_escalation. Never auto-fill a date in an agent draft.
