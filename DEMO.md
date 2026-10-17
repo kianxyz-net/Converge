@@ -26,7 +26,7 @@ Priya asks **What are enterprise rate limits?** Expected: 5,000 requests/min per
 
 Priya asks **What is the on-prem plan?** The status is needs_escalation and the card says nothing has been sent. Show the exact proposed question. Click **Cancel** once to demonstrate no Engineering job, then ask again and click **Send to Engineering**.
 
-Ava sees an eng-only staged draft in Releases with `[DATE]` and `[AVAILABILITY]`. The agent has not filled Q1 or any date. Enter a human date or check **No date is committed**; resolve availability or mark no availability committed. Edit wording if needed. Demonstrate that an internal term disables approval and shows a warning, then remove it.
+Ava sees an eng-only staged draft in Approvals with `[DATE]` and `[AVAILABILITY]`. The agent has not filled Q1 or any date. Enter a human date or check **No date is committed**; resolve availability or mark no availability committed. Edit wording if needed. Demonstrate that an internal term disables approval and shows a warning, then remove it.
 
 Review the exact resolved-text preview, check the approval box, and click **Approve and release to Sales**. The server creates a private audit and new shared record. Priya receives **Engineering answered (approved by Ava): …** with a citation.
 
@@ -42,7 +42,7 @@ Optional on the seeded Northwind rollout channel: **When will Northwind sign?** 
 
 ## 3:25–3:45 · Inspect and compare audiences
 
-Use **Why this answer** to inspect allowed labels, context records, validated citations, output labels, tools and outbound scan. The operator table lists labels and Eng/Sales visibility. Sales prompts contain no Engineering-only records.
+Open **Library** to compare an artifact’s audience, version and SHA-256; use **History** to inspect the approval and only the sources your team can access. A shared output does not unlock private sources. Use **Why this answer** to inspect allowed labels, context records, validated citations, output labels, tools and outbound scan. The operator table lists labels and Eng/Sales visibility. Sales prompts contain no Engineering-only records.
 
 ## 3:45–4:00 · Retract
 
@@ -51,3 +51,5 @@ Click **Retract release** on the shared on-prem answer. Confirm the notice: it r
 ## Technical proof
 
 `pnpm test` covers labels, append-only triggers, canaries, human-only actions, placeholder and internal-term enforcement, hash binding, rejection, retraction lineage, scoped MCP, REST/SSE resume and rules parity. `pnpm eval` reports 24 cases across six classes with leak and agent-filled-date counts.
+
+The broader product is sharing useful AI outputs with controlled access. Secure execution of small software is a future phase, not implemented here. Reviewer effort and time saved require a real pilot; the seeded demo does not measure ROI.

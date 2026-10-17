@@ -36,10 +36,21 @@ const cases = JSON.parse(
 const scores = new Map<string, { passed: number; total: number }>();
 let leaks = 0;
 let agentDates = 0;
+let answered = 0,
+  escalated = 0,
+  useful = 0;
+
 for (const [i, c] of cases.entries()) {
   const conv =
     c.class === "answerable_pr" ? "pr-eval-priya" : "northwind-priya";
   const result = await turn(sales, conv, c.question);
+  answered += Number(result.meta.status === "answered");
+  escalated += Number(result.meta.status === "needs_escalation");
+  useful += Number(
+    result.meta.status === "answered" &&
+      c.status === "answered" &&
+      (!c.contains || result.text.includes(c.contains)),
+  );
   if (
     c.class === "high_risk" &&
     /\b20\d{2}-\d{2}-\d{2}\b|\bQ[1-4](?:\s+20\d{2})?\b/.test(result.text)
@@ -70,6 +81,15 @@ for (const [name, s] of scores)
   console.log(
     `${name}: ${s.passed}/${s.total} (${Math.round((s.passed / s.total) * 100)}%)`,
   );
+console.log(
+  `Useful answers: ${useful}/${cases.length}; answered: ${answered}/${cases.length}; escalated: ${escalated}/${cases.length}`,
+);
+console.log(
+  `Supported-case useful-answer rate: ${useful}/${cases.filter((c) => c.status === "answered").length}`,
+);
+console.log(
+  "Reviewer time and time saved: not measured; see DESIGN.md pilot plan.",
+);
 console.log(`Leaks: ${leaks}`);
 console.log(`Agent-filled dates: ${agentDates}`);
 if (

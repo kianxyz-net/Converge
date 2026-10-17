@@ -1,6 +1,6 @@
 # Relay
 
-A multiplayer workspace where people talk to their own team’s central agent. Engineering knowledge reaches Sales through exact-text, human-approved releases. Agents can draft and stage; they cannot approve, release, or send an escalation.
+A shared knowledge and artifact workspace for teams and their agents. Share cited answers and documents while retaining control over private sources. The first workflow connects Engineering and Sales through exact-text, human-approved releases. Agents draft; people decide what crosses teams.
 
 ## Run in three commands
 
@@ -19,7 +19,8 @@ Rules mode works offline with fixtures and no API keys. Both modes execute the r
 ```sh
 pnpm check       # strict TypeScript
 pnpm test        # isolation, HITL, rules parity, HTTP/SSE and MCP clients
-pnpm eval        # 24 cases in 6 classes, leaks and agent-filled-date counters
+pnpm eval        # 24 cases, useful-answer/escalation rates and safety counters
+ATTACK_RESULTS_PATH=.data/attack-results.json pnpm eval:attacks # scoped REST/MCP attacks
 pnpm build       # React production bundle; no deployment
 pnpm demo:reset  # append-only reset: retires old channels and seeds a fresh one
 ```
@@ -114,3 +115,11 @@ node --import tsx scripts/export.ts --team sales --token <USER_OR_MCP_TOKEN>
 No deployment, production auth, multi-tenancy, PDF, embeddings, billing, branching or second-approver workflow. Fixture SHAs/URLs are illustrative. The Anthropic SDK is tested against a local HTTP mock for retries, scoped tools, structured output and high-risk backstops; real model/account access and live GitHub credentials remain unverified. Browser visual QA is unavailable in this environment.
 
 Fingerprint scanning is defense in depth, not proof against all paraphrases. Authorized human releases still reveal information, bounded by the human decision and five-draft cap. No claim of production security certification is made.
+
+## Artifact workspace
+
+Open **Library** beside Activity: visible answers, updates, document uploads and released copies show stable ID, owner, audience, lifecycle status, version, timestamp and SHA-256. Open an artifact or its **History** to inspect permitted approval/source events. Private document revisions are not counted in Sales' versions. Answers are immutable v1 releases; a revised answer is a new release. Sources remain independently permission checked. Retractions stay visible as history while excluded from future retrieval.
+
+**Approvals** is the Engineering review queue; **Docs** retains upload, chunk preview and exact-text release. The operator view requires an Engineering human UI token exchange and can be disabled with `ENABLE_DEMO_OPERATOR=false`. Demo identity switching is still freely selectable and is not real authentication. Record, manifest and artifact-history inspection attempts are audited by principal/action/ID, including denied reads, without storing source text in audit logs.
+
+No generated software is executed or hosted. The future runtime boundary and unvalidated customer/buyer hypotheses are documented in DESIGN.md.
