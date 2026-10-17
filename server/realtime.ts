@@ -5,8 +5,12 @@ const clients = new Set<{ p: Principal; res: Response; seq: number }>();
 export function subscribe(p: Principal, res: Response, after: number) {
   const client = { p, res, seq: after };
   clients.add(client);
-  const poll=setInterval(()=>flushClient(client),1000);poll.unref();
-  res.on("close", () => {clients.delete(client);clearInterval(poll)});
+  const poll = setInterval(() => flushClient(client), 1000);
+  poll.unref();
+  res.on("close", () => {
+    clients.delete(client);
+    clearInterval(poll);
+  });
   flushClient(client);
   return client;
 }

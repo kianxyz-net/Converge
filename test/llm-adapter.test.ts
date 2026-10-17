@@ -63,7 +63,9 @@ test("Anthropic adapter retries once, executes a scoped tool, forces final outpu
   const port = (server.address() as { port: number }).port;
   process.env.ANTHROPIC_API_KEY = "local-test-key";
   process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
-  process.env.LLM_MODE = "live";process.env.AGENT_MODE="llm";process.env.LOG_PROMPTS="true";
+  process.env.LLM_MODE = "live";
+  process.env.AGENT_MODE = "llm";
+  process.env.LOG_PROMPTS = "true";
   try {
     const result = await generate(
       principal("agent-sales")!,
@@ -88,9 +90,76 @@ test("Anthropic adapter retries once, executes a scoped tool, forces final outpu
   } finally {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_BASE_URL;
-    process.env.LLM_MODE = "offline";process.env.AGENT_MODE="rules";process.env.LOG_PROMPTS="true";
+    process.env.LLM_MODE = "offline";
+    process.env.AGENT_MODE = "rules";
+    process.env.LOG_PROMPTS = "true";
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));
   }
 });
-test('live adapter backstop escalates uncited commitments and replaces Engineering dates with placeholders',async()=>{const server=http.createServer(async(req,res)=>{for await(const _chunk of req){}res.setHeader('Content-Type','application/json');res.end(JSON.stringify({id:'msg-risk',type:'message',role:'assistant',model:'mock-model',content:[{type:'tool_use',id:'respond-risk',name:'respond',input:{answer_markdown:'On-prem will ship on 2027-04-01 for $999.',source_ids:['brief-northwind'],status:'answered',high_risk_fields:[]}}],stop_reason:'tool_use',stop_sequence:null,usage:{input_tokens:10,output_tokens:10}}))});server.listen(0,'127.0.0.1');await once(server,'listening');process.env.AGENT_MODE='llm';process.env.ANTHROPIC_API_KEY='local-test-key';process.env.ANTHROPIC_BASE_URL=`http://127.0.0.1:${(server.address()as {port:number}).port}`;try{const store=await import('../server/store/visibility.js');const brief=store.get(principal('agent-sales')!,'brief-northwind')!;const sales=await generate(principal('agent-sales')!,'northwind','risk-sales','What is our on-prem delivery commitment?',[brief]);assert.equal(sales.answer.status,'needs_escalation');assert.ok(!sales.answer.answer_markdown.includes('2027-04-01'));const eng=await generate(principal('agent-eng')!,'northwind','risk-eng','What is our on-prem delivery commitment?',[brief]);assert.ok(eng.answer.answer_markdown.includes('[DATE]'));assert.ok(eng.answer.answer_markdown.includes('[PRICE]'));assert.ok(!eng.answer.answer_markdown.includes('2027-04-01'));assert.ok(!eng.answer.answer_markdown.includes('$999'))}finally{delete process.env.ANTHROPIC_API_KEY;delete process.env.ANTHROPIC_BASE_URL;process.env.AGENT_MODE='rules';server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()))}})
+test("live adapter backstop escalates uncited commitments and replaces Engineering dates with placeholders", async () => {
+  const server = http.createServer(async (req, res) => {
+    for await (const _chunk of req) {
+    }
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        id: "msg-risk",
+        type: "message",
+        role: "assistant",
+        model: "mock-model",
+        content: [
+          {
+            type: "tool_use",
+            id: "respond-risk",
+            name: "respond",
+            input: {
+              answer_markdown: "On-prem will ship on 2027-04-01 for $999.",
+              source_ids: ["brief-northwind"],
+              status: "answered",
+              high_risk_fields: [],
+            },
+          },
+        ],
+        stop_reason: "tool_use",
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10 },
+      }),
+    );
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  process.env.AGENT_MODE = "llm";
+  process.env.ANTHROPIC_API_KEY = "local-test-key";
+  process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  try {
+    const store = await import("../server/store/visibility.js");
+    const brief = store.get(principal("agent-sales")!, "brief-northwind")!;
+    const sales = await generate(
+      principal("agent-sales")!,
+      "northwind",
+      "risk-sales",
+      "What is our on-prem delivery commitment?",
+      [brief],
+    );
+    assert.equal(sales.answer.status, "needs_escalation");
+    assert.ok(!sales.answer.answer_markdown.includes("2027-04-01"));
+    const eng = await generate(
+      principal("agent-eng")!,
+      "northwind",
+      "risk-eng",
+      "What is our on-prem delivery commitment?",
+      [brief],
+    );
+    assert.ok(eng.answer.answer_markdown.includes("[DATE]"));
+    assert.ok(eng.answer.answer_markdown.includes("[PRICE]"));
+    assert.ok(!eng.answer.answer_markdown.includes("2027-04-01"));
+    assert.ok(!eng.answer.answer_markdown.includes("$999"));
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_BASE_URL;
+    process.env.AGENT_MODE = "rules";
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});

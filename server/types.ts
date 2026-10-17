@@ -55,7 +55,12 @@ export interface Question {
 export interface Answer {
   answer_markdown: string;
   source_ids: string[];
-  status: "answered" | "needs_escalation" | "insufficient_context" | "declined" | "blocked";
+  status:
+    | "answered"
+    | "needs_escalation"
+    | "insufficient_context"
+    | "declined"
+    | "blocked";
   high_risk_fields?: string[];
 }
 export interface Manifest {

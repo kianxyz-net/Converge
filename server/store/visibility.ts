@@ -16,7 +16,14 @@ const decode = (row: unknown): RecordRow => {
     meta: string;
     refs: string;
   };
-  return { ...r, meta: JSON.parse(r.meta), refs: JSON.parse(r.refs),withdrawn:!!db.prepare("SELECT ref_id FROM withdrawals WHERE ref_id=?").get(r.id) };
+  return {
+    ...r,
+    meta: JSON.parse(r.meta),
+    refs: JSON.parse(r.refs),
+    withdrawn: !!db
+      .prepare("SELECT ref_id FROM withdrawals WHERE ref_id=?")
+      .get(r.id),
+  };
 };
 export interface EventInput {
   type: string;
@@ -51,8 +58,14 @@ export function append(p: Principal, input: EventInput): RecordRow {
     db.prepare(
       "INSERT INTO search(text,ref_type,ref_id,labels_mask) VALUES(?,?,?,?)",
     ).run(input.text, "event", id, input.labels_mask);
-  const manifest=input.meta?.manifest as {record_ids_in_prompt?:string[]}|undefined;
-  for(const source of new Set([...(input.refs||[]),...(manifest?.record_ids_in_prompt||[])]))link(p,id,source);
+  const manifest = input.meta?.manifest as
+    | { record_ids_in_prompt?: string[] }
+    | undefined;
+  for (const source of new Set([
+    ...(input.refs || []),
+    ...(manifest?.record_ids_in_prompt || []),
+  ]))
+    link(p, id, source);
   return get(p, id)!;
 }
 export function get(p: Principal, id: string) {
@@ -76,7 +89,7 @@ export function list(
     type?: string;
     limit?: number;
     sharedOnly?: boolean;
-    activeOnly?:boolean;
+    activeOnly?: boolean;
   } = {},
 ) {
   let sql = "SELECT * FROM events WHERE (labels_mask & ~?)=0";
@@ -96,7 +109,9 @@ export function list(
     args.push(opts.after);
   }
   if (opts.sharedOnly) sql += " AND labels_mask=0";
-  if(opts.activeOnly)sql+=" AND NOT EXISTS(SELECT 1 FROM withdrawals w WHERE w.ref_id=events.id)";
+  if (opts.activeOnly)
+    sql +=
+      " AND NOT EXISTS(SELECT 1 FROM withdrawals w WHERE w.ref_id=events.id)";
   sql += " ORDER BY seq ASC LIMIT ?";
   args.push(opts.limit || 2000);
   return db
@@ -206,8 +221,48 @@ export function assertDeleteBlocked(p: Principal) {
   db.prepare("DELETE FROM events WHERE id=?").run(r.id);
 }
 
-export function active(p:Principal,opts:Parameters<typeof list>[1]={}){return list(p,{...opts,activeOnly:true})}
-export function link(p:Principal,id:string,source:string){if(!get(p,id)&&!getChunk(p,id))throw Error('Dependency target not visible');db.prepare('INSERT OR IGNORE INTO dependencies VALUES(?,?)').run(id,source)}
-export function isActive(p:Principal,id:string){return !!(get(p,id)||getChunk(p,id))&&!db.prepare('SELECT ref_id FROM withdrawals WHERE ref_id=?').get(id)}
-export function withdraw(p:Principal,targetId:string,noticeId:string){if(!get(p,targetId))throw Error('Retraction target not visible');const ids=db.prepare('WITH RECURSIVE affected(id) AS (SELECT ? UNION SELECT d.ref_id FROM dependencies d JOIN affected a ON d.source_id=a.id) SELECT id FROM affected').all(targetId) as {id:string}[];for(const {id}of ids)db.prepare('INSERT OR IGNORE INTO withdrawals VALUES(?,?)').run(id,noticeId);return ids.map(r=>r.id)}
-export function retireChannel(p:Principal,channelId:string,noticeId:string){for(const r of list(p,{channel:channelId,limit:100000}))if(r.id!==noticeId)withdraw(p,r.id,noticeId);for(const c of db.prepare('SELECT c.id FROM chunks c JOIN documents d ON c.doc_id=d.id WHERE d.channel_id=? AND (c.labels_mask & ~?)=0').all(channelId,p.clearance_mask) as {id:string}[])db.prepare('INSERT OR IGNORE INTO withdrawals VALUES(?,?)').run(c.id,noticeId)}
+export function active(p: Principal, opts: Parameters<typeof list>[1] = {}) {
+  return list(p, { ...opts, activeOnly: true });
+}
+export function link(p: Principal, id: string, source: string) {
+  if (!get(p, id) && !getChunk(p, id))
+    throw Error("Dependency target not visible");
+  db.prepare("INSERT OR IGNORE INTO dependencies VALUES(?,?)").run(id, source);
+}
+export function isActive(p: Principal, id: string) {
+  return (
+    !!(get(p, id) || getChunk(p, id)) &&
+    !db.prepare("SELECT ref_id FROM withdrawals WHERE ref_id=?").get(id)
+  );
+}
+export function withdraw(p: Principal, targetId: string, noticeId: string) {
+  if (!get(p, targetId)) throw Error("Retraction target not visible");
+  const ids = db
+    .prepare(
+      "WITH RECURSIVE affected(id) AS (SELECT ? UNION SELECT d.ref_id FROM dependencies d JOIN affected a ON d.source_id=a.id) SELECT id FROM affected",
+    )
+    .all(targetId) as { id: string }[];
+  for (const { id } of ids)
+    db.prepare("INSERT OR IGNORE INTO withdrawals VALUES(?,?)").run(
+      id,
+      noticeId,
+    );
+  return ids.map((r) => r.id);
+}
+export function retireChannel(
+  p: Principal,
+  channelId: string,
+  noticeId: string,
+) {
+  for (const r of list(p, { channel: channelId, limit: 100000 }))
+    if (r.id !== noticeId) withdraw(p, r.id, noticeId);
+  for (const c of db
+    .prepare(
+      "SELECT c.id FROM chunks c JOIN documents d ON c.doc_id=d.id WHERE d.channel_id=? AND (c.labels_mask & ~?)=0",
+    )
+    .all(channelId, p.clearance_mask) as { id: string }[])
+    db.prepare("INSERT OR IGNORE INTO withdrawals VALUES(?,?)").run(
+      c.id,
+      noticeId,
+    );
+}

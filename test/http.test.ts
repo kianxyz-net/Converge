@@ -4,7 +4,9 @@ import { once } from "node:events";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 process.env.DATABASE_PATH = ":memory:";
-process.env.LLM_MODE = "offline";process.env.AGENT_MODE="rules";process.env.LOG_PROMPTS="true";
+process.env.LLM_MODE = "offline";
+process.env.AGENT_MODE = "rules";
+process.env.LOG_PROMPTS = "true";
 const { seed } = await import("../server/seed.js");
 const { app, finishApp } = await import("../server/app.js");
 const { principal, hash, db } = await import("../server/store/db.js");
@@ -86,11 +88,33 @@ test("REST, SSE resume, exports and Streamable HTTP MCP preserve team boundaries
     assert.ok(!block.includes("CANARY-SALES-91C2"));
     controller.abort();
     const client = new Client({ name: "sales-http-eval", version: "1" });
-    const mcpToken=(await call('/auth/mcp-token',sales,{})).data.token as string;
-    const {issueToken}=await import('../server/auth.js');const agentToken=issueToken('agent-eng').token;
-    const engMcp=(await call('/auth/mcp-token',eng,{})).data.token as string;
-    for(const restricted of [agentToken,engMcp,mcpToken])for(const [path,body]of [['/releases/not-real/approve',{text:'No date is committed.',text_hash:hash('No date is committed.'),expected_hash:'old'}],['/documents/not-real/release',{confirmed:true,text_hash:'no'}],['/questions/escalate',{proposal_id:'no',text_hash:'no',confirmed:true}],['/releases/not-real/reject',{}],['/records/not-real/retract',{}],['/demo/reset',{}]]as const)assert.equal((await call(path,restricted,body)).status,403,path);
-    assert.equal((await call('/auth/mcp-token',mcpToken,{})).status,403);
+    const mcpToken = (await call("/auth/mcp-token", sales, {})).data
+      .token as string;
+    const { issueToken } = await import("../server/auth.js");
+    const agentToken = issueToken("agent-eng").token;
+    const engMcp = (await call("/auth/mcp-token", eng, {})).data
+      .token as string;
+    for (const restricted of [agentToken, engMcp, mcpToken])
+      for (const [path, body] of [
+        [
+          "/releases/not-real/approve",
+          {
+            text: "No date is committed.",
+            text_hash: hash("No date is committed."),
+            expected_hash: "old",
+          },
+        ],
+        ["/documents/not-real/release", { confirmed: true, text_hash: "no" }],
+        [
+          "/questions/escalate",
+          { proposal_id: "no", text_hash: "no", confirmed: true },
+        ],
+        ["/releases/not-real/reject", {}],
+        ["/records/not-real/retract", {}],
+        ["/demo/reset", {}],
+      ] as const)
+        assert.equal((await call(path, restricted, body)).status, 403, path);
+    assert.equal((await call("/auth/mcp-token", mcpToken, {})).status, 403);
 
     await client.connect(
       new StreamableHTTPClientTransport(new URL(base + "/mcp"), {

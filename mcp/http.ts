@@ -5,8 +5,12 @@ import { fromToken } from "../server/auth.js";
 export function mountMcp(app: Express) {
   app.post("/mcp", async (req, res) => {
     const p = fromToken(req.headers.authorization?.replace(/^Bearer /, ""));
-    if (!p || p.scope!=="mcp" || !["eng", "sales"].includes(p.team_id)) {
-      res.status(401).json({ error: "A scoped MCP token from /api/auth/mcp-token is required" });
+    if (!p || p.scope !== "mcp" || !["eng", "sales"].includes(p.team_id)) {
+      res
+        .status(401)
+        .json({
+          error: "A scoped MCP token from /api/auth/mcp-token is required",
+        });
       return;
     }
     const server = createMcp(p),

@@ -2,15 +2,15 @@ import { randomUUID } from "node:crypto";
 import { db, principal, hash } from "./store/db.js";
 import * as store from "./store/visibility.js";
 import type { Principal, RecordRow, Question, Release } from "./types.js";
-import { requireEngineer,requireHuman } from "./auth.js";
-import {releaseProblem} from "./security.js";
+import { requireEngineer, requireHuman } from "./auth.js";
+import { releaseProblem } from "./security.js";
 export const fail = (message: string, status = 400) => {
   throw Object.assign(Error(message), { status });
 };
 export function channel(id: string) {
-  const c = db.prepare("SELECT * FROM channels WHERE id=? AND COALESCE(retired,0)=0").get(id) as
-    | { id: string; name: string; account: string }
-    | undefined;
+  const c = db
+    .prepare("SELECT * FROM channels WHERE id=? AND COALESCE(retired,0)=0")
+    .get(id) as { id: string; name: string; account: string } | undefined;
   return c || fail("Channel not found", 404);
 }
 export function conversation(p: Principal, id: string) {
@@ -22,7 +22,10 @@ export function conversation(p: Principal, id: string) {
 }
 export function myConversation(p: Principal, channelId: string) {
   channel(channelId);
-  if (!(["eng", "sales"].includes(p.team_id)) || (p.kind!=="user"&&p.scope!=="mcp"))
+  if (
+    !["eng", "sales"].includes(p.team_id) ||
+    (p.kind !== "user" && p.scope !== "mcp")
+  )
     fail("User identity required", 403);
   const id = channelId + "-" + p.id;
   db.prepare("INSERT OR IGNORE INTO conversations VALUES(?,?,?,?)").run(
@@ -87,10 +90,26 @@ export function approve(
     fail("Missing label authority", 403);
   if (hash(text) !== textHash || r.text_hash !== expectedHash)
     fail("Text hash changed; review the exact text again", 409);
-  const problem=releaseProblem(text);if(problem)fail(problem,422);
-  const draft = store.bySeq(p, r.draft_event_seq)!;channel(draft.channel_id);if(!store.isActive(p,draft.id))fail("Draft references withdrawn context; generate a new draft",422);
+  const problem = releaseProblem(text);
+  if (problem) fail(problem, 422);
+  const draft = store.bySeq(p, r.draft_event_seq)!;
+  channel(draft.channel_id);
+  if (!store.isActive(p, draft.id))
+    fail("Draft references withdrawn context; generate a new draft", 422);
   return db.transaction(() => {
-    const audit=store.append(p,{type:"declassify",channel_id:draft.channel_id,labels_mask:r.labels_from,text,refs:[draft.id],meta:{kind:"approval_audit",text_hash:textHash,release_id:id,approved_by:p.id}});
+    const audit = store.append(p, {
+      type: "declassify",
+      channel_id: draft.channel_id,
+      labels_mask: r.labels_from,
+      text,
+      refs: [draft.id],
+      meta: {
+        kind: "approval_audit",
+        text_hash: textHash,
+        release_id: id,
+        approved_by: p.id,
+      },
+    });
     const event = store.append(p, {
       type: "ingest",
       channel_id: draft.channel_id,
@@ -129,7 +148,7 @@ export function approve(
         refs: [event.id],
         meta: {
           kind: "answer_available",
-          status:"answered",
+          status: "answered",
           question_id: questionId,
           manifest: {
             allowed_mask: asker.clearance_mask,
@@ -160,8 +179,22 @@ export function reject(p: Principal, id: string) {
   );
   const q = r!.event?.meta.question_id;
   if (typeof q === "string")
-    db.prepare("UPDATE questions SET state=? WHERE id=?").run("draft_rejected", q);
-  if(typeof q==="string") {const question=db.prepare("SELECT channel_id FROM questions WHERE id=?").get(q) as {channel_id:string};store.append(p,{type:"message",channel_id:question.channel_id,labels_mask:0,text:`${p.name} rejected the draft. The question remains open.`,meta:{kind:"draft_rejected",question_id:q}})}
+    db.prepare("UPDATE questions SET state=? WHERE id=?").run(
+      "draft_rejected",
+      q,
+    );
+  if (typeof q === "string") {
+    const question = db
+      .prepare("SELECT channel_id FROM questions WHERE id=?")
+      .get(q) as { channel_id: string };
+    store.append(p, {
+      type: "message",
+      channel_id: question.channel_id,
+      labels_mask: 0,
+      text: `${p.name} rejected the draft. The question remains open.`,
+      meta: { kind: "draft_rejected", question_id: q },
+    });
+  }
 }
 export function splitChunks(text: string) {
   const words = text.split(/\s+/);
@@ -220,7 +253,12 @@ export function documents(p: Principal, channelId: string) {
       released_from: string | null;
       original_text: string | null;
     }[]
-  ).map((d) => ({ ...d, chunks: store.chunks(p, d.id).filter(c=>store.isActive(p,c.id)) })).filter(d=>d.chunks.length>0);
+  )
+    .map((d) => ({
+      ...d,
+      chunks: store.chunks(p, d.id).filter((c) => store.isActive(p, c.id)),
+    }))
+    .filter((d) => d.chunks.length > 0);
 }
 export function releaseDocument(
   p: Principal,
@@ -246,9 +284,22 @@ export function releaseDocument(
   const text = doc!.original_text ?? chunks.map((c) => c.text).join("\n\n");
   if (!confirmed || hash(text) !== expectedHash)
     fail("Confirm release of the exact document text", 409);
+  const problem = releaseProblem(text);
+  if (problem) fail(problem, 422);
   return db.transaction(() => {
     const sharedId = randomUUID();
-    const audit=store.append(p,{type:"declassify",channel_id:doc!.channel_id,labels_mask:1,text,refs:chunks.map(c=>c.id),meta:{kind:"document_approval_audit",text_hash:hash(text),approved_by:p.id}});
+    const audit = store.append(p, {
+      type: "declassify",
+      channel_id: doc!.channel_id,
+      labels_mask: 1,
+      text,
+      refs: chunks.map((c) => c.id),
+      meta: {
+        kind: "document_approval_audit",
+        text_hash: hash(text),
+        approved_by: p.id,
+      },
+    });
     const event = store.append(p, {
       type: "ingest",
       channel_id: doc!.channel_id,
@@ -258,8 +309,8 @@ export function releaseDocument(
       meta: {
         kind: "document",
         original_document: id,
-        released_document:sharedId,
-        approved_by:p.id,
+        released_document: sharedId,
+        approved_by: p.id,
         text_hash: hash(text),
         labels_from: doc!.labels_mask,
         labels_to: 0,
@@ -270,12 +321,94 @@ export function releaseDocument(
       "INSERT INTO documents(id,channel_id,name,owner_id,state,labels_mask,released_from,original_text) VALUES(?,?,?,?,?,?,?,?)",
     ).run(sharedId, doc!.channel_id, doc!.name, p.id, "released", 0, id, text);
     chunks.forEach((c) =>
-      (()=>{const chunkId=randomUUID();store.addChunk(p,{...c,id:chunkId,doc_id:sharedId,labels_mask:0});store.link(p,chunkId,event.id)})(),
+      (() => {
+        const chunkId = randomUUID();
+        store.addChunk(p, {
+          ...c,
+          id: chunkId,
+          doc_id: sharedId,
+          labels_mask: 0,
+        });
+        store.link(p, chunkId, event.id);
+      })(),
     );
     db.prepare("UPDATE documents SET state=? WHERE id=?").run("released", id);
     return event;
   })();
 }
 
-export function retract(p:Principal,id:string){requireHuman(p);const release=db.prepare('SELECT * FROM releases WHERE id=?').get(id) as Release|undefined;const event=release?store.active(p).find(e=>e.meta.release_id===id&&e.labels_mask===0):store.get(p,id);if(!event||event.labels_mask!==0||!['released_answer','document','update'].includes(String(event.meta.kind)))fail('Released record not found',404);if(!store.isActive(p,event!.id))fail('Record already retracted',409);if(p.team_id!=='eng'&&p.id!==event!.author_id)fail('Retraction authority required',403);return db.transaction(()=>{const notice=store.append(p,{type:'retraction',channel_id:event!.channel_id,labels_mask:0,text:`${p.name} retracted a released record. This excludes it from future answers; earlier deliveries cannot be unsent.`,refs:[],meta:{target_id:event!.id,kind:'retraction'}});store.withdraw(p,event!.id,notice.id);db.prepare('UPDATE questions SET state=?,answer_event_seq=NULL WHERE answer_event_seq=?').run('open',event!.seq);if(release)db.prepare('UPDATE releases SET state=? WHERE id=?').run('retracted',release.id);else if(typeof event!.meta.release_id==='string')db.prepare('UPDATE releases SET state=? WHERE id=?').run('retracted',event!.meta.release_id);return notice})()}
-export function humanPost(p:Principal,channelId:string,text:string,confirmed:boolean){requireHuman(p,p.clearance_mask);channel(channelId);if(!confirmed)fail('Confirm both teams will see this message',422);const audit=store.append(p,{type:'declassify',channel_id:channelId,labels_mask:p.clearance_mask,text,meta:{kind:'human_post_audit',text_hash:hash(text)}});return store.append(p,{type:'human_post',channel_id:channelId,labels_mask:0,text,refs:[audit.id],meta:{kind:'human_post',author_name:p.name,text_hash:hash(text),approved_by:p.id}})}
+export function retract(p: Principal, id: string) {
+  requireHuman(p);
+  const release = db.prepare("SELECT * FROM releases WHERE id=?").get(id) as
+    | Release
+    | undefined;
+  const event = release
+    ? store
+        .active(p)
+        .find((e) => e.meta.release_id === id && e.labels_mask === 0)
+    : store.get(p, id);
+  if (
+    !event ||
+    event.labels_mask !== 0 ||
+    !["released_answer", "document", "update"].includes(String(event.meta.kind))
+  )
+    fail("Released record not found", 404);
+  if (!store.isActive(p, event!.id)) fail("Record already retracted", 409);
+  if (p.team_id !== "eng" && p.id !== event!.author_id)
+    fail("Retraction authority required", 403);
+  return db.transaction(() => {
+    const notice = store.append(p, {
+      type: "retraction",
+      channel_id: event!.channel_id,
+      labels_mask: 0,
+      text: `${p.name} retracted a released record. This excludes it from future answers; earlier deliveries cannot be unsent.`,
+      refs: [],
+      meta: { target_id: event!.id, kind: "retraction" },
+    });
+    store.withdraw(p, event!.id, notice.id);
+    db.prepare(
+      "UPDATE questions SET state=?,answer_event_seq=NULL WHERE answer_event_seq=?",
+    ).run("open", event!.seq);
+    if (release)
+      db.prepare("UPDATE releases SET state=? WHERE id=?").run(
+        "retracted",
+        release.id,
+      );
+    else if (typeof event!.meta.release_id === "string")
+      db.prepare("UPDATE releases SET state=? WHERE id=?").run(
+        "retracted",
+        event!.meta.release_id,
+      );
+    return notice;
+  })();
+}
+export function humanPost(
+  p: Principal,
+  channelId: string,
+  text: string,
+  confirmed: boolean,
+) {
+  requireHuman(p, p.clearance_mask);
+  channel(channelId);
+  if (!confirmed) fail("Confirm both teams will see this message", 422);
+  const audit = store.append(p, {
+    type: "declassify",
+    channel_id: channelId,
+    labels_mask: p.clearance_mask,
+    text,
+    meta: { kind: "human_post_audit", text_hash: hash(text) },
+  });
+  return store.append(p, {
+    type: "human_post",
+    channel_id: channelId,
+    labels_mask: 0,
+    text,
+    refs: [audit.id],
+    meta: {
+      kind: "human_post",
+      author_name: p.name,
+      text_hash: hash(text),
+      approved_by: p.id,
+    },
+  });
+}

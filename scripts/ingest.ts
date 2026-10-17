@@ -17,7 +17,7 @@ let payload: unknown;
 try {
   payload = JSON.parse(input);
 } catch {
-  payload = { channel_id: "northwind", text: input };
+  payload = { text: input };
 }
 const res = await fetch(
   (process.env.RELAY_URL || "http://127.0.0.1:4173") +

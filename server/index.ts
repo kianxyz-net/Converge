@@ -2,7 +2,7 @@ import { seed } from "./seed.js";
 import { app, finishApp } from "./app.js";
 import { syncGitHub } from "./connectors/github.js";
 import { principal } from "./store/db.js";
-const channelId=seed();
+const channelId = seed();
 await syncGitHub(principal("ava")!, channelId);
 await finishApp();
 const port = Number(process.env.PORT || 4173);

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 process.env.DATABASE_PATH = ":memory:";
-process.env.LLM_MODE = "offline";process.env.AGENT_MODE="rules";process.env.LOG_PROMPTS="true";
+process.env.LLM_MODE = "offline";
+process.env.AGENT_MODE = "rules";
+process.env.LOG_PROMPTS = "true";
 const { seed } = await import("../server/seed.js");
 const { principal } = await import("../server/store/db.js");
 const { ingest } = await import("../server/connectors/ingest.js");
@@ -52,7 +54,14 @@ test("MCP client sales isolation and no release approval tool", async () => {
       },
     });
     assert.ok(!JSON.stringify(reply).includes("CANARY-ENG-7F3A"));
-    const staged=await client.callTool({name:'ask_team_agent',arguments:{channel_id:'northwind',text:'What is the on-prem plan?'}});assert.ok(!JSON.stringify(staged).includes('CANARY-ENG-7F3A'));const core=await import('../server/core.js');assert.equal(core.questions(eng,'northwind').length,0);assert.equal(core.pending(eng).length,0);
+    const staged = await client.callTool({
+      name: "ask_team_agent",
+      arguments: { channel_id: "northwind", text: "What is the on-prem plan?" },
+    });
+    assert.ok(!JSON.stringify(staged).includes("CANARY-ENG-7F3A"));
+    const core = await import("../server/core.js");
+    assert.equal(core.questions(eng, "northwind").length, 0);
+    assert.equal(core.pending(eng).length, 0);
     const pending = await client.callTool({
       name: "list_pending_releases",
       arguments: {},

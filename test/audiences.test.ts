@@ -1,11 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 process.env.DATABASE_PATH = ":memory:";
-process.env.LLM_MODE = "offline";process.env.AGENT_MODE="rules";process.env.LOG_PROMPTS="true";
+process.env.LLM_MODE = "offline";
+process.env.AGENT_MODE = "rules";
+process.env.LOG_PROMPTS = "true";
 const { seed } = await import("../server/seed.js");
 const { principal, db } = await import("../server/store/db.js");
 const store = await import("../server/store/visibility.js");
-const { maybeSummary, turn,confirmEscalation } = await import("../server/agents/turn.js");
+const { maybeSummary, turn, confirmEscalation } = await import(
+  "../server/agents/turn.js"
+);
 const { safeEscalation } = await import("../server/security.js");
 seed();
 test("summaries are per audience and never include the other team canary", async () => {
@@ -39,12 +43,13 @@ test("summaries are per audience and never include the other team canary", async
 });
 test("escalation excludes accumulated sales context and private customer values", async () => {
   const user = principal("priya")!;
-  const answer=await turn(
+  const answer = await turn(
     user,
     "northwind-priya",
     "Can we support an on-prem plan for this customer?",
   );
-  const proposal=answer.meta.escalation as {id:string;text_hash:string};await confirmEscalation(user,proposal.id,proposal.text_hash);
+  const proposal = answer.meta.escalation as { id: string; text_hash: string };
+  await confirmEscalation(user, proposal.id, proposal.text_hash);
   const eng = principal("ava")!;
   const shared = store.list(eng, { sharedOnly: true });
   assert.ok(
@@ -54,8 +59,17 @@ test("escalation excludes accumulated sales context and private customer values"
   );
   assert.ok(!JSON.stringify(shared).includes("CANARY-SALES-91C2"));
   assert.ok(!JSON.stringify(shared).includes("December 18"));
-  const second=await turn(user,"northwind-priya","Northwind will sign this week if the on-prem date is firm; can we promise an on-prem date?");
- const secondProposal=second.meta.escalation as {id:string;text_hash:string};if(secondProposal)await confirmEscalation(user,secondProposal.id,secondProposal.text_hash);
+  const second = await turn(
+    user,
+    "northwind-priya",
+    "Northwind will sign this week if the on-prem date is firm; can we promise an on-prem date?",
+  );
+  const secondProposal = second.meta.escalation as {
+    id: string;
+    text_hash: string;
+  };
+  if (secondProposal)
+    await confirmEscalation(user, secondProposal.id, secondProposal.text_hash);
   const latest = store
     .list(eng, { sharedOnly: true })
     .filter((r) => r.meta.kind === "open_question")

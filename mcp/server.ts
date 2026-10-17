@@ -1,4 +1,4 @@
-import{asMcp}from"../server/auth.js";
+import { asMcp } from "../server/auth.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Principal } from "../server/types.js";
@@ -7,7 +7,7 @@ import { turn } from "../server/agents/turn.js";
 import { deliverDigest } from "../server/delta.js";
 import { retriever } from "../server/store/visibility.js";
 export function createMcp(user: Principal) {
- const p=asMcp(user);
+  const p = asMcp(user);
   const server = new McpServer({ name: "relay-team-agents", version: "0.2.0" });
   const result = (value: unknown) => ({
     content: [{ type: "text" as const, text: JSON.stringify(value) }],

@@ -12,7 +12,9 @@ export const answerModel = () =>
 export const summaryModel = () =>
   process.env.SUMMARY_MODEL || "claude-haiku-5-5";
 export const offline = () =>
-  process.env.AGENT_MODE ? process.env.AGENT_MODE !== "llm" : process.env.LLM_MODE !== "live";
+  process.env.AGENT_MODE
+    ? process.env.AGENT_MODE !== "llm"
+    : process.env.LLM_MODE !== "live";
 export function logCall(
   p: Principal,
   conversation: string,

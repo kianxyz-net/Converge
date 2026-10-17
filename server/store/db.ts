@@ -52,6 +52,16 @@ export function agentFor(p: import("../types.js").Principal) {
   return a;
 }
 
-if (!(db.pragma('table_info(token_sessions)') as {name:string}[]).some(c=>c.name==='scope')) db.exec("ALTER TABLE token_sessions ADD COLUMN scope TEXT DEFAULT 'ui'");
+if (
+  !(db.pragma("table_info(token_sessions)") as { name: string }[]).some(
+    (c) => c.name === "scope",
+  )
+)
+  db.exec("ALTER TABLE token_sessions ADD COLUMN scope TEXT DEFAULT 'ui'");
 
-if (!(db.pragma("table_info(channels)") as {name:string}[]).some(c=>c.name==="retired")) db.exec("ALTER TABLE channels ADD COLUMN retired INTEGER DEFAULT 0");
+if (
+  !(db.pragma("table_info(channels)") as { name: string }[]).some(
+    (c) => c.name === "retired",
+  )
+)
+  db.exec("ALTER TABLE channels ADD COLUMN retired INTEGER DEFAULT 0");

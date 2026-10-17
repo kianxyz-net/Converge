@@ -7,13 +7,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 const dir = await mkdtemp(path.join(os.tmpdir(), "relay-stdio-"));
 process.env.DATABASE_PATH = path.join(dir, "test.sqlite");
-process.env.LLM_MODE = "offline";process.env.AGENT_MODE="rules";process.env.LOG_PROMPTS="true";
+process.env.LLM_MODE = "offline";
+process.env.AGENT_MODE = "rules";
+process.env.LOG_PROMPTS = "true";
 const { seed } = await import("../server/seed.js");
 const { issueToken } = await import("../server/auth.js");
 const { db } = await import("../server/store/db.js");
 seed();
 test("stdio MCP client receives only its principal-visible records", async () => {
-  const { token } = issueToken("priya","mcp");
+  const { token } = issueToken("priya", "mcp");
   const env = Object.fromEntries(
     Object.entries({ ...process.env, RELAY_TOKEN: token }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",

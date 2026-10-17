@@ -100,7 +100,11 @@ export async function deliverDigest(user: Principal, channelId: string) {
       agent.team_id,
     );
     const scan = outboundScan(agent, text, records);
-    if (records.some((r) => !validated.source_ids.includes(r.id)) || !scan.ok || !highRiskBackstop(text,records).ok)
+    if (
+      records.some((r) => !validated.source_ids.includes(r.id)) ||
+      !scan.ok ||
+      !highRiskBackstop(text, records).ok
+    )
       throw Error("Digest validation failed; cursor was not advanced");
     const labels = unionLabels(records, user.clearance_mask);
     const manifest: Manifest = {

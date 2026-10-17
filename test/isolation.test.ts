@@ -65,12 +65,9 @@ test("citations default to escalation and scanner blocks seeded leaks", () => {
 test("randomized assembled contexts and SQL retrieval never exceed clearance", async () => {
   const { assemble } = await import("../server/agents/turn.js");
   const { db } = await import("../server/store/db.js");
-  db.prepare("INSERT INTO channels(id,name,account,created_by) VALUES(?,?,?,?)").run(
-    "property",
-    "Property",
-    "Property",
-    "ava",
-  );
+  db.prepare(
+    "INSERT INTO channels(id,name,account,created_by) VALUES(?,?,?,?)",
+  ).run("property", "Property", "Property", "ava");
   const writer = { ...eng, id: "property-writer", clearance_mask: 3 };
   for (let i = 0; i < 120; i++)
     store.append(writer, {
