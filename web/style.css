@@ -1027,3 +1027,108 @@ textarea {
     height: 600px;
   }
 }
+
+.attacks-panel {
+  min-height: 100vh;
+}
+.attacks-topbar {
+  justify-content: space-between;
+}
+.attacks-link {
+  font-size: 10px;
+  color: #6c855b;
+}
+.attacks-body {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 34px 24px 40px;
+}
+.attacks-banner {
+  background: #b3261e;
+  color: #fff;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 14px 24px;
+}
+.attacks-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 13px;
+  margin-bottom: 16px;
+}
+.attacks-stat strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 20px;
+  letter-spacing: -0.5px;
+}
+.attacks-stat strong.ok {
+  color: #5c7e47;
+}
+.attacks-stat strong.leaked {
+  color: #b3261e;
+}
+.attacks-mode {
+  border: 1px dashed #c8d2ba;
+  border-radius: 7px;
+  background: #fbfcf8;
+  color: #7d8a6e;
+  font-size: 10px;
+  padding: 10px 14px;
+  margin-bottom: 24px;
+}
+.attacks-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #e4eadb;
+  border-radius: 7px;
+  overflow: hidden;
+  margin-bottom: 26px;
+}
+.attacks-table th {
+  text-align: left;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: #9aa78c;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e8eddf;
+  background: #fafbf7;
+}
+.attacks-table td {
+  font-size: 11px;
+  color: #53664a;
+  padding: 9px 14px;
+  border-bottom: 1px solid #f0f3ea;
+  vertical-align: top;
+}
+.attacks-table td.attack-text {
+  color: #3c4d42;
+  overflow-wrap: anywhere;
+}
+.attacks-badge {
+  font-size: 9px;
+  font-weight: 650;
+  border-radius: 4px;
+  padding: 3px 8px;
+  display: inline-block;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+.attacks-badge.blocked {
+  background: #e8f1e3;
+  color: #5c7e47;
+}
+.attacks-badge.leaked,
+.badge.leaked {
+  background: #f7e3e1;
+  color: #b3261e;
+}
+.attacks-table code {
+  font-size: 10px;
+  background: #eef2e7;
+  padding: 1px 5px;
+  border-radius: 4px;
+}

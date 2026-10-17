@@ -250,7 +250,17 @@ for (const [index, a] of attacks.entries()) {
     class: a.class,
     interface: a.interface,
     kind,
-    attack: a.text || a.then || a.turns?.join(" | ") || a.tool || a.path || "",
+    attack:
+      a.turns?.join(" | ") ||
+      (a.interface === "mcp"
+        ? // Real attack payload: the question or query the tool received.
+          (a.extra?.text as string) ||
+          (a.extra?.query as string) ||
+          a.tool ||
+          ""
+        : a.method
+          ? `${a.method} ${a.path}`
+          : a.text || a.then || "") || "",
     http_status: httpStatus,
     agent_status: statuses.filter(Boolean).at(-1) || null,
     outcome: isLeak ? "leaked" : "blocked",

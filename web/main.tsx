@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
+import { AttacksPanel } from "./attacks-panel";
 type Principal = {
   id: string;
   name: string;
@@ -1087,8 +1088,11 @@ function Operator() {
   );
 }
 const demo = location.pathname === "/demo";
+const attacks = location.pathname === "/attacks";
 createRoot(document.getElementById("root")!).render(
-  demo ? (
+  attacks ? (
+    <AttacksPanel />
+  ) : demo ? (
     <>
       <div className="demo-banner">
         <strong>Relay multiplayer demo</strong>
