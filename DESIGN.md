@@ -26,3 +26,11 @@
 - Engineering drafts remain eng-labeled even when they reference shared sources; human approval is the only route to Sales.
 - Team-only chats are team-visible at the record layer, as requested, but conversation routes restrict personal transcript access to the owner. No private raw chat is indexed for retrieval.
 - All manifests and tokens are checked server-side. Models cannot approve releases or choose labels.
+
+## Completed implementation notes
+- The model-facing `open_question` tool intentionally accepts no text: it requests escalation of the one current rep message, which is sanitized and scanned after final-answer validation. This is stricter than the proposed text argument and avoids pulling Sales-private history into a tool-generated question.
+- Shared shipped digests are computed from already-shared PRs only. Personal digest records retain the conversation label. The shared thread copy has no private conversation input and therefore remains mask 0; no private digest record is relabeled.
+- Live digest delivery requires a valid citation for every PR before advancing its cursor. Fixture compare SHAs are illustrative.
+- Browser rendering could not be visually verified in this environment. Strict TypeScript, production bundling, API/SSE and real MCP-client tests verify the implementation without claiming a browser screenshot check.
+- Anthropic SDK execution is verified against a local HTTP mock (transient retry, scoped tool execution, forced final `respond`, prompt logging). A real Anthropic account/model and live GitHub repo were not used.
+- `documents.original_text` is an added field that preserves exact uploaded bytes independently of overlapping retrieval chunks. Release confirmation hashes that full text; the new shared copy preserves it verbatim. Existing local databases receive a nullable-column migration.
