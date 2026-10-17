@@ -145,7 +145,7 @@ export const retriever: Retriever = {
     const terms = (query.match(/[\p{L}\p{N}_-]+/gu) || [])
       .filter((w) => w.length > 2)
       .slice(0, 18)
-      .map((w) => '"' + w.replaceAll('"', "") + '"');
+      .map((w) => '"' + w.replaceAll('"', "") + '"*');
     if (!terms.length) return [];
     const rows = db
       .prepare(
