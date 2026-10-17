@@ -1,10 +1,6 @@
 import "../server/config.js";
-const { seed, resetDemo } = await import("../server/seed.js");
-const { principal } = await import("../server/store/db.js");
-const first = seed();
-const channel = process.argv.includes("--reset")
-  ? resetDemo(principal("ava")!)
-  : first;
-const { syncGitHub } = await import("../server/connectors/github.js");
-await syncGitHub(principal("ava")!, channel);
-console.log("Relay demo ready (append-only reset; seed is idempotent).");
+const { seedNegotiation } = await import("../server/negotiation.js");
+seedNegotiation(process.argv.includes("--reset"));
+console.log(
+  "Northstar negotiation ready: 38 Business sources, 33 Technical sources; append-only reset.",
+);
