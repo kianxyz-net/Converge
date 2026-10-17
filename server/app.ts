@@ -25,6 +25,7 @@ import { ingest } from "./connectors/ingest.js";
 import { seed, resetDemo, activeDemoChannel } from "./seed.js";
 import { mountMcp } from "../mcp/http.js";
 import { artifacts, artifactHistory } from "./artifacts.js";
+import { mountHandoff } from "./handoff-api.js";
 import { mountNegotiation } from "./negotiation-api.js";
 export const app = express();
 const auditRead = (p: Principal, action: string, target: string) =>
@@ -53,10 +54,13 @@ const wrap =
       return;
     }
     // Negotiation sessions cannot use the archived dashboard's privilege exchanges.
-    if (["business", "technical"].includes(p.team_id)) {
+    if (
+      ["business", "technical"].includes(p.team_id) ||
+      p.id.startsWith("demo-")
+    ) {
       res
         .status(403)
-        .json({ error: "Use the negotiation API for this demo identity" });
+        .json({ error: "Use the scoped demo API for this identity" });
       return;
     }
     Promise.resolve()
@@ -87,6 +91,7 @@ app.post("/api/connectors/:id/ingest", (req, res, next) => {
   }
 });
 mountNegotiation(app);
+mountHandoff(app);
 const exportsByUser = new Map<string, { start: number; count: number }>();
 app.get(
   "/api/export",

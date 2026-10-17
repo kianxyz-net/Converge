@@ -9,9 +9,10 @@ export function outboundScan(
   text: string,
   allowed: ContextRecord[],
   excludedIds: string[] = [],
+  channel?: string,
 ) {
   const permitted = allowed.map((r) => r.text).join("\n");
-  for (const row of outside(p)) {
+  for (const row of outside(p, channel)) {
     if (excludedIds.includes(row.id)) continue;
     const tokens = row.text.match(/\S+/g) || [];
     const values = [

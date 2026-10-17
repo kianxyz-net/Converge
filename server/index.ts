@@ -2,6 +2,8 @@ import { app, finishApp } from "./app.js";
 
 import { seedNegotiation } from "./negotiation.js";
 seedNegotiation();
+import { seedHandoff } from "./handoff.js";
+seedHandoff();
 
 await finishApp();
 const port = Number(process.env.PORT || 4173);

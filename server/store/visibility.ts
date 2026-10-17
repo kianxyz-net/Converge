@@ -188,18 +188,22 @@ export const retriever: Retriever = {
       .filter((r) => r.text);
   },
 };
-export function outside(p: Principal): ContextRecord[] {
+export function outside(p: Principal, channel?: string): ContextRecord[] {
   return [
     ...db
       .prepare(
-        "SELECT id,text,labels_mask FROM events WHERE (labels_mask & ~?)!=0",
+        "SELECT id,text,labels_mask FROM events WHERE (labels_mask & ~?)!=0" +
+          (channel ? " AND channel_id=?" : ""),
       )
-      .all(p.clearance_mask),
+      .all(...(channel ? [p.clearance_mask, channel] : [p.clearance_mask])),
     ...db
       .prepare(
-        "SELECT id,text,labels_mask FROM chunks WHERE (labels_mask & ~?)!=0",
+        "SELECT id,text,labels_mask FROM chunks WHERE (labels_mask & ~?)!=0" +
+          (channel
+            ? " AND doc_id IN (SELECT id FROM documents WHERE channel_id=?)"
+            : ""),
       )
-      .all(p.clearance_mask),
+      .all(...(channel ? [p.clearance_mask, channel] : [p.clearance_mask])),
   ] as ContextRecord[];
 }
 export function exportRecords(p: Principal, mask: number) {
