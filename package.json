@@ -4,8 +4,9 @@
   "private": true,
   "description": "A multiplayer team negotiation workspace prototype",
   "scripts": {
-    "dev": "python3 -m http.server 4173 --bind 127.0.0.1 --directory dist",
-    "start": "python3 -m http.server 4173 --bind 127.0.0.1 --directory dist",
-    "check": "node --check dist/app.js"
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --input-type=module --check < dist/app.js",
+    "test": "node --test test/*.test.mjs"
   }
 }
