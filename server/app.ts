@@ -25,6 +25,7 @@ import { ingest } from "./connectors/ingest.js";
 import { seed, resetDemo, activeDemoChannel } from "./seed.js";
 import { mountMcp } from "../mcp/http.js";
 import { artifacts, artifactHistory } from "./artifacts.js";
+import { mountNegotiation } from "./negotiation-api.js";
 export const app = express();
 const auditRead = (p: Principal, action: string, target: string) =>
   db
@@ -78,6 +79,7 @@ app.post("/api/connectors/:id/ingest", (req, res, next) => {
     next(e);
   }
 });
+mountNegotiation(app);
 const exportsByUser = new Map<string, { start: number; count: number }>();
 app.get(
   "/api/export",

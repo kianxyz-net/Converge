@@ -1,1694 +1,1151 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import "./style.css";
-type Principal = {
+import "./negotiation.css";
+type Source = {
   id: string;
-  name: string;
-  team_id: string;
-  clearance_mask: number;
-};
-type Session = { token: string; principal: Principal };
-type RecordRow = {
-  id: string;
-  channel_id: string;
-  seq: number;
-  type: string;
-  text: string;
-  labels_mask: number;
-  refs: string[];
-  meta: Record<string, unknown>;
-  conversation_id: string | null;
-  withdrawn?: boolean;
-};
-type Artifact = {
-  id: string;
-  type: string;
-  title: string;
-  version: number;
-  owner: string;
-  audience: string;
-  labels_mask: number;
-  status: string;
-  hash: string;
-  approved_by: string | null;
-  created_at: string;
-  source_ids: string[];
-  text: string;
-};
-type Channel = {
-  id: string;
-  name: string;
-  account: string;
-  conversation_id: string;
-};
-type Question = {
-  id: string;
-  text: string;
-  state: string;
-  answer_event_seq: number | null;
-};
-type Release = {
-  id: string;
-  text: string;
-  text_hash: string;
-  state: string;
   kind: string;
-  event: RecordRow;
+  source: string;
+  author: string;
+  timestamp: string;
+  text: string;
 };
-type Doc = {
+type Evidence = { source_id: string; exact_excerpt: string };
+type Argument = { id: string; text: string; evidence_candidates: Evidence[] };
+type Option = { kind: string; introduction: string; arguments: Argument[] };
+type Row = {
   id: string;
-  name: string;
-  state: string;
+  type: string;
+  text: string;
+  ts: string;
+  author_id: string;
+  hash: string;
   labels_mask: number;
-  released_from: string | null;
-  original_text: string | null;
-  chunks: { id: string; text: string }[];
+  meta: Record<string, unknown>;
 };
-const label = (mask: number) =>
-  mask === 0
-    ? "shared"
-    : mask === 1
-      ? "eng"
-      : mask === 2
-        ? "sales"
-        : "operator";
-async function sha(text: string) {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text),
-  );
-  return [...new Uint8Array(digest)]
-    .map((n) => n.toString(16).padStart(2, "0"))
-    .join("");
-}
-async function request<T>(
+type Draft = Row & {
+  meta: {
+    options: Option[];
+    team: string;
+    mode: string;
+    topic_id: string;
+    provenance: Record<
+      string,
+      { author: string; timestamp: string; source: string }
+    >;
+  };
+};
+type Decision = Row & {
+  accepted_B: boolean;
+  accepted_T: boolean;
+  status: string;
+};
+type State = {
+  run_id: string;
+  team: "B" | "T";
+  mode: string;
+  scenario: {
+    vendor: string;
+    client: string;
+    topic: string;
+    opening_request: string;
+    fictional: boolean;
+    as_of: string;
+  };
+  sources: Source[];
+  messages: Row[];
+  drafts: Draft[];
+  decision: Decision | null;
+};
+type Session = { token: string; principal: { id: string; name: string } };
+type Selection = {
+  option: number;
+  argument_ids: string[];
+  evidence_keys: string[];
+};
+type Preview = { body: string; hash: string };
+async function api<T>(
   path: string,
   token?: string,
   body?: unknown,
 ): Promise<T> {
-  const res = await fetch("/api" + path, {
-    method: body !== undefined ? "POST" : "GET",
+  const res = await fetch("/api/negotiation" + path, {
+    method: body === undefined ? "GET" : "POST",
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: "Bearer " + token } : {}),
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json();
   if (!res.ok) throw Error(data.error || "Request failed");
   return data as T;
 }
-function useStream(
-  token: string | undefined,
-  onRecord: () => void,
-  onStep: (s: string) => void,
-) {
-  const recordRef = useRef(onRecord),
-    stepRef = useRef(onStep);
-  recordRef.current = onRecord;
-  stepRef.current = onStep;
-  useEffect(() => {
-    if (!token) return;
-    const controller = new AbortController();
-    let after = 0;
-    async function connect() {
-      while (!controller.signal.aborted) {
-        try {
-          const res = await fetch("/api/stream", {
-            headers: {
-              Authorization: "Bearer " + token,
-              "Last-Event-ID": String(after),
-            },
-            signal: controller.signal,
-          });
-          if (!res.ok) throw Error("Stream disconnected");
-          const reader = res.body!.getReader(),
-            decoder = new TextDecoder();
-          let buffer = "";
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            let index: number;
-            while ((index = buffer.indexOf("\n\n")) !== -1) {
-              const block = buffer.slice(0, index);
-              buffer = buffer.slice(index + 2);
-              const data = block
-                .split("\n")
-                .find((l) => l.startsWith("data: "))
-                ?.slice(6);
-              const seq = block
-                .split("\n")
-                .find((l) => l.startsWith("id: "))
-                ?.slice(4);
-              if (seq) after = Number(seq);
-              if (!data) continue;
-              if (block.includes("event: step"))
-                stepRef.current(JSON.parse(data).status);
-              else recordRef.current();
-            }
-          }
-        } catch {
-          if (controller.signal.aborted) return;
-        }
-        await new Promise((r) => setTimeout(r, 1200));
-      }
-    }
-    void connect();
-    return () => controller.abort();
-  }, [token]);
-}
-function Badge({ mask }: { mask: number }) {
-  return <span className={"badge " + label(mask)}>{label(mask)}</span>;
-}
-function RelayPane({
-  initialUser,
-  split = false,
-  onSession,
-  channelOverride,
-  releaseToken,
-}: {
-  initialUser: string;
-  split?: boolean;
-  onSession?: (s: Session | null) => void;
-  channelOverride?: string;
-  releaseToken?: string;
-}) {
-  const [identity, setIdentity] = useState(initialUser),
-    [stored, setStored] = useState<Session | null>(null),
-    [channels, setChannels] = useState<Channel[]>([]),
-    [channelId, setChannelId] = useState("northwind"),
-    [messages, setMessages] = useState<RecordRow[]>([]),
-    [thread, setThread] = useState<RecordRow[]>([]),
-    [questions, setQuestions] = useState<Question[]>([]),
-    [releases, setReleases] = useState<Release[]>([]),
-    [docs, setDocs] = useState<Doc[]>([]),
-    [artifacts, setArtifacts] = useState<Artifact[]>([]),
-    [tab, setTab] = useState(
-      split && initialUser === "ava" ? "releases" : "thread",
-    ),
+const time = (s: string) =>
+  new Date(s).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+const provider = (s: Source) =>
+  s.source.startsWith("zoom:")
+    ? "Zoom"
+    : /github/.test(s.source)
+      ? "GitHub"
+      : /calendar/.test(s.source)
+        ? "Calendar"
+        : /crm/.test(s.source)
+          ? "CRM"
+          : /client|northstar/.test(s.source)
+            ? "Client Chat"
+            : "Team Chat";
+function App() {
+  const [identity, setIdentity] = useState("business-member"),
+    [session, setSession] = useState<Session | null>(null),
+    [state, setState] = useState<State | null>(null),
+    [channel, setChannel] = useState("team-b"),
     [text, setText] = useState(""),
-    [status, setStatus] = useState("idle"),
-    [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [drawer, setDrawer] = useState<{ title: string; data: unknown } | null>(
-      null,
-    ),
-    [confirmDoc, setConfirmDoc] = useState<Doc | null>(null),
-    [newChannel, setNewChannel] = useState(false),
-    [update, setUpdate] = useState(false),
-    [mode, setMode] = useState("offline");
-  const [proposals, setProposals] = useState<
-      { id: string; text: string; text_hash: string; state: string }[]
-    >([]),
-    [internalTerms, setInternalTerms] = useState<string[]>([]),
-    [post, setPost] = useState(""),
-    [postConfirmed, setPostConfirmed] = useState(false),
-    [retractRecord, setRetractRecord] = useState<RecordRow | null>(null);
-  const session = stored?.principal.id === identity ? stored : null,
-    token = session?.token,
-    eng = session?.principal.team_id === "eng";
+    [busy, setBusy] = useState(false),
+    [confirmed, setConfirmed] = useState(false),
+    [review, setReview] = useState<Draft | null>(null),
+    [detail, setDetail] = useState<Source | null>(null),
+    [decisionOpen, setDecisionOpen] = useState(false),
+    [resetOpen, setResetOpen] = useState(false);
+  const generation = useRef(0),
+    timeline = useRef<HTMLDivElement>(null),
+    stateRef = useRef<State | null>(null);
+  const team = identity === "business-member" ? "B" : "T",
+    own = team === "B" ? "team-b" : "team-t";
   useEffect(() => {
-    onSession?.(session);
-  }, [stored, identity, onSession]);
-  useEffect(() => {
-    if (channelOverride) setChannelId(channelOverride);
-  }, [channelOverride]);
-  useEffect(() => {
-    setInternalTerms([]);
-    if (token && eng)
-      void request<{ internalTerms: string[] }>("/policy", token).then((r) =>
-        setInternalTerms(r.internalTerms),
-      );
-  }, [token, eng]);
-  const conv = channels.find((c) => c.id === channelId)?.conversation_id;
-  const loadVersion = useRef(0);
-  const alive = useRef(0),
-    refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
-    chatEnd = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const gen = ++alive.current;
-    setStored(null);
-    setMessages([]);
-    setThread([]);
-    setReleases([]);
-    setDocs([]);
-    setArtifacts([]);
-    setQuestions([]);
-    setDrawer(null);
+    let alive = true;
+    setSession(null);
+    setState(null);
+    stateRef.current = null;
+    setReview(null);
+    setDetail(null);
     setText("");
     setError("");
-    void request<Session>("/auth/switch", undefined, { user_id: identity })
+    setConfirmed(false);
+    setDecisionOpen(false);
+    setChannel(identity === "business-member" ? "team-b" : "team-t");
+    void api<Session>("/session", undefined, { identity })
       .then((s) => {
-        if (alive.current === gen) setStored(s);
+        if (alive) setSession(s);
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => {
+        if (alive) setError(e.message);
+      });
     return () => {
-      alive.current++;
+      alive = false;
     };
   }, [identity]);
-  const load = useCallback(async () => {
+  const token = session?.token;
+  async function refresh() {
     if (!token) return;
-    const gen = alive.current,
-      version = ++loadVersion.current;
-    try {
-      const cs = await request<Channel[]>("/channels", token);
-      const c = cs.find((c) => c.id === channelId) || cs[0];
-      if (!c) return;
-      const [m, t, q, r, d, ep, arts] = await Promise.all([
-        request<RecordRow[]>(
-          "/conversations/" + c.conversation_id + "/messages",
-          token,
-        ),
-        request<RecordRow[]>("/channels/" + c.id + "/thread", token),
-        request<Question[]>("/channels/" + c.id + "/questions", token),
-        request<Release[]>("/releases/pending", token),
-        request<Doc[]>("/channels/" + c.id + "/documents", token),
-        request<
-          { id: string; text: string; text_hash: string; state: string }[]
-        >("/escalations?channel_id=" + c.id, token),
-        request<Artifact[]>("/channels/" + c.id + "/artifacts", token),
-      ]);
-      if (gen !== alive.current || version !== loadVersion.current) return;
-      setChannels(cs);
-      setChannelId(c.id);
-      setMessages(m);
-      setThread(t);
-      setQuestions(q);
-      setReleases(r.filter((x) => x.event.channel_id === c.id));
-      setDocs(d);
-      setProposals(ep);
-      setArtifacts(arts);
-    } catch (e) {
-      if (gen === alive.current) setError((e as Error).message);
+    const gen = generation.current;
+    const next = await api<State>("/state?channel=" + channel, token);
+    if (gen === generation.current) {
+      if (stateRef.current && stateRef.current.run_id !== next.run_id) {
+        setReview(null);
+        setDetail(null);
+        setDecisionOpen(false);
+      }
+      stateRef.current = next;
+      setState(next);
     }
-  }, [token, channelId]);
+  }
   useEffect(() => {
-    void load();
-    return () => clearTimeout(refreshTimer.current);
-  }, [load]);
-  const schedule = () => {
-    clearTimeout(refreshTimer.current);
-    refreshTimer.current = setTimeout(() => void load(), 80);
-  };
-  useStream(token, schedule, setStatus);
+    generation.current++;
+    if (!token) return;
+    let stopped = false;
+    const controller = new AbortController();
+    const gen = generation.current;
+    const load = () => {
+      if (!stopped)
+        void api<State>("/state?channel=" + channel, token)
+          .then((next) => {
+            if (stopped || gen !== generation.current) return;
+            if (stateRef.current && stateRef.current.run_id !== next.run_id) {
+              setReview(null);
+              setDetail(null);
+              setDecisionOpen(false);
+            }
+            stateRef.current = next;
+            setState(next);
+          })
+          .catch((e) => {
+            if (!stopped) setError(e.message);
+          });
+    };
+    load();
+    const poll = setInterval(load, 2500);
+    void (async () => {
+      try {
+        const res = await fetch("/api/negotiation/stream", {
+          headers: { Authorization: "Bearer " + token },
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const reader = res.body?.getReader();
+        if (!reader) return;
+        while (!stopped) {
+          const r = await reader.read();
+          if (r.done) break;
+          load();
+        }
+      } catch {
+        /* periodic reload remains available */
+      }
+    })();
+    return () => {
+      stopped = true;
+      clearInterval(poll);
+      controller.abort();
+    };
+  }, [token, channel]);
   useEffect(() => {
-    void request<{ mode: string }>("/health").then((d) => setMode(d.mode));
-  }, []);
-  useEffect(() => {
-    chatEnd.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [messages.length, status]);
-  const autoDelivered = useRef(new Set<string>());
-  useEffect(() => {
-    if (!token || !conv) return;
-    const key = identity + ":" + channelId;
-    if (autoDelivered.current.has(key)) return;
-    autoDelivered.current.add(key);
-    void request("/channels/" + channelId + "/digest", token, {})
-      .then(() => load())
-      .catch((e) => setError(e.message));
-  }, [token, conv, channelId, identity]);
-  async function run(path: string, body: unknown) {
-    if (!token || busy) return;
+    setConfirmed(false);
+    setText("");
+  }, [channel]);
+  async function action(fn: () => Promise<unknown>) {
     setBusy(true);
     setError("");
     try {
-      const result = await request(path, token, body);
-      await load();
-      return result;
+      await fn();
+      await refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
-      setStatus("idle");
     }
+  }
+  async function send(e: React.FormEvent) {
+    e.preventDefault();
+    if (!text.trim()) return;
+    await action(async () => {
+      const r = await api<{ draft: Draft | null }>("/messages", token, {
+        channel,
+        text,
+        confirmed,
+      });
+      setText("");
+      setConfirmed(false);
+      if (r.draft?.type === "neg_draft") setReview(r.draft);
+    });
   }
   async function source(id: string) {
+    const gen = generation.current;
     try {
-      setDrawer({
-        title: "Source record",
-        data: await request("/records/" + encodeURIComponent(id), token),
-      });
+      const record = await api<Source>(
+        "/sources/" + encodeURIComponent(id),
+        token,
+      );
+      if (gen === generation.current) setDetail(record);
     } catch (e) {
       setError((e as Error).message);
     }
   }
-  async function inspect(id: string) {
-    try {
-      setDrawer({
-        title: "Why this answer",
-        data: await request(
-          "/events/" + encodeURIComponent(id) + "/inspect",
-          token,
-        ),
-      });
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  const citations = (refs: string[]) =>
-    refs.length > 0 && (
-      <div className="citations">
-        {refs.map((id, i) => (
-          <button key={id} onClick={() => void source(id)}>
-            [r{i + 1}] ↗{" "}
-            {id.startsWith("github")
-              ? "GitHub PR"
-              : id.startsWith("doc-")
-                ? "Document"
-                : "Record"}{" "}
-            <span>{id.slice(-7)}</span>
-          </button>
-        ))}
-      </div>
+  const shared = channel === "collab",
+    messages =
+      state?.messages.filter((m) =>
+        shared ? m.labels_mask === 0 : m.labels_mask !== 0,
+      ) || [];
+  const rounds =
+    state?.messages.filter((m) => m.type === "neg_proposal").length || 0;
+  const hasBoth =
+    state?.messages.some(
+      (m) => m.type === "neg_proposal" && m.meta.team === "B",
+    ) &&
+    state?.messages.some(
+      (m) => m.type === "neg_proposal" && m.meta.team === "T",
     );
-  const msg = (m: RecordRow) => {
-    const isAgent = m.type === "agent_message" || m.type === "digest";
-    return (
-      <article
-        className={"message " + (isAgent ? "agent" : "person")}
-        key={m.id}
-      >
-        <div className={"avatar " + (isAgent ? "bot" : "")}>
-          {isAgent ? "✦" : session?.principal.name[0]}
-        </div>
-        <div className="message-body">
-          <div className="message-head">
-            <strong>
-              {m.type === "digest"
-                ? "Release radar"
-                : isAgent
-                  ? eng
-                    ? "Engineering agent"
-                    : "Sales agent"
-                  : session?.principal.name}
-            </strong>
-            <Badge mask={m.labels_mask} />
-            {isAgent && (
-              <span className={"state " + String(m.meta.status || "answered")}>
-                {String(m.meta.status || "answered")}
-              </span>
-            )}
-            {isAgent && (
-              <button className="inspect" onClick={() => void inspect(m.id)}>
-                Why this answer ↗
-              </button>
-            )}
-          </div>
-          <p className="preserve">{m.text}</p>
-          {citations(m.refs)}
-          {typeof m.meta.compare_url === "string" && (
-            <a
-              className="compare"
-              href={m.meta.compare_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Compare changes on GitHub ↗
-            </a>
-          )}
-          {m.withdrawn && (
-            <div className="withdrawn">
-              Withdrawn context — excluded from future answers. Earlier
-              deliveries cannot be unsent.
-            </div>
-          )}
-          {m.meta.status === "needs_escalation" &&
-            (() => {
-              const staged = m.meta.escalation as
-                | { id: string; text: string; text_hash: string; state: string }
-                | undefined;
-              if (!staged) return null;
-              const proposal =
-                proposals.find((p) => p.id === staged.id) || staged;
-              return (
-                <div className="escalated">
-                  <strong>
-                    {proposal.state === "staged"
-                      ? "Nothing has been sent to Engineering."
-                      : proposal.state === "cancelled"
-                        ? "Escalation cancelled."
-                        : "Sent to Engineering with your approval."}
-                  </strong>
-                  <p>{proposal.text}</p>
-                  {proposal.state === "staged" && (
-                    <div className="button-row">
-                      <button
-                        className="button primary"
-                        disabled={busy}
-                        onClick={() =>
-                          void run("/questions/escalate", {
-                            proposal_id: proposal.id,
-                            text_hash: proposal.text_hash,
-                            confirmed: true,
-                          })
-                        }
-                      >
-                        Send to Engineering
-                      </button>
-                      <button
-                        className="button"
-                        disabled={busy}
-                        onClick={() =>
-                          void run("/questions/" + proposal.id + "/cancel", {})
-                        }
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-        </div>
-      </article>
-    );
-  };
   return (
-    <section className={"workspace " + (split ? "split-pane" : "")}>
-      <header className="topbar">
-        <a className="brand" href="/">
+    <div className="relay-app">
+      <aside className="sidebar">
+        <a className="logo" href="/">
           relay<span>✳</span>
         </a>
-        <span className="divider" />
-        <span className="workspace-name">Acme Cloud API</span>
+        <div className="workspace">
+          AsterCloud <span>DEMO</span>
+        </div>
+        <p className="side-label">CHANNELS</p>
+        <nav>
+          {["team-b", "team-t", "collab"].map((c) => (
+            <button
+              key={c}
+              className={channel === c ? "channel active" : "channel"}
+              disabled={c !== own && c !== "collab"}
+              onClick={() => setChannel(c)}
+            >
+              <span>#</span>
+              {c}
+              {c !== "collab" && <small>{c === own ? "private" : "🔒"}</small>}
+            </button>
+          ))}
+        </nav>
+        <div className="side-story">
+          <span className="live-dot" /> ONE TOPIC
+          <p>Northstar pilot readiness</p>
+          <small>
+            Fictional evidence.
+            <br />
+            Real review boundaries.
+          </small>
+        </div>
         <div className="identity">
-          <Badge mask={eng ? 1 : 2} />
+          <label htmlFor="identity">DEMO IDENTITY</label>
           <select
-            aria-label="Demo identity"
+            id="identity"
+            disabled={busy}
             value={identity}
             onChange={(e) => {
+              generation.current++;
+              setState(null);
+              setSession(null);
+              setReview(null);
+              setDetail(null);
               setIdentity(e.target.value);
-              autoDelivered.current.clear();
             }}
           >
-            <option value="priya">Priya · Sales</option>
-            <option value="ben">Ben · Sales</option>
-            <option value="ava">Ava · Engineering</option>
+            <option value="business-member">Maya · Business</option>
+            <option value="technical-member">Noah · Technical</option>
           </select>
-        </div>
-      </header>
-      <div className="workspace-bar">
-        <div>
-          <span className="eyebrow">ACCOUNT CHANNEL</span>
-          <div className="channel-choice">
-            <span>#</span>
-            <select
-              aria-label="Channel"
-              value={channelId}
-              onChange={(e) => {
-                setChannelId(e.target.value);
-                setDrawer(null);
-              }}
-            >
-              {channels.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            {eng && (
-              <button
-                className="icon-button"
-                title="Create channel"
-                onClick={() => setNewChannel(true)}
-              >
-                ＋
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="channel-actions">
-          <span className="mode">
-            <i />
-            {mode === "rules" ? "Rules mode · offline" : "Anthropic connected"}
-          </span>
-          <button
-            className="button"
-            disabled={busy || !token}
-            onClick={() => void run("/channels/" + channelId + "/digest", {})}
-          >
-            ◷ What’s new
+          <small>Team-scoped demo access · no real auth</small>
+          <button className="reset" onClick={() => setResetOpen(true)}>
+            ↻ Reset demo
           </button>
-          {eng && (
-            <button
-              className="button"
-              disabled={busy}
-              onClick={() =>
-                void run("/github/sync", { channel_id: channelId })
-              }
-            >
-              Sync GitHub
-            </button>
-          )}
         </div>
-      </div>
-      <div className="content">
-        <section className="chat">
-          <div className="chat-title">
-            <div className="agent-orb">✦</div>
-            <div>
-              <h1>Your {eng ? "Engineering" : "Sales"} agent</h1>
-              <p>
-                {eng
-                  ? "Full engineering context. You control what leaves."
-                  : "Answers from released context. No guessing."}
-              </p>
-            </div>
-            <span className="private-tag">◈ {eng ? "eng" : "sales"} only</span>
+      </aside>
+      <main className="main">
+        <header className="channel-header">
+          <div>
+            <h1>
+              <span>#</span> {channel}
+            </h1>
+            <p>
+              {shared
+                ? "Both teams · approved proposals and human discussion"
+                : `Private to ${team === "B" ? "Business" : "Technical"} · humans + Agent ${team}`}
+            </p>
           </div>
-          <div className="chat-scroll">
-            {!session ? (
-              <div className="empty">Joining your team workspace…</div>
-            ) : messages.length ? (
-              messages
-                .filter((m) =>
-                  ["message", "agent_message", "digest"].includes(m.type),
-                )
-                .map(msg)
-            ) : (
-              <div className="welcome">
-                <span>✦</span>
-                <h2>
-                  Your team’s context,
-                  <br />
-                  one conversation away.
-                </h2>
-                <p>
-                  {eng
-                    ? "Review questions, prepare answers, and approve exactly what Sales can see."
-                    : "Ask about the platform. Your agent cites released information and asks Engineering when it doesn’t know."}
-                </p>
-                <div className="suggestions">
-                  {(eng
-                    ? [
-                        "Draft an update about rate limits",
-                        "What is our internal on-prem plan?",
-                      ]
-                    : [
-                        "What is the enterprise rate limit?",
-                        "How should customers handle HTTP 429?",
-                        "What is the on-prem plan?",
-                      ]
-                  ).map((t) => (
-                    <button key={t} onClick={() => setText(t)}>
-                      {t} ↗
-                    </button>
-                  ))}
-                </div>
+          <span className="audience">{shared ? "◎ Shared" : "◈ Private"}</span>
+        </header>
+        <div className={"mode-banner " + (state?.mode === "llm" ? "real" : "")}>
+          <strong>
+            {state?.mode === "llm" ? "LLM drafting" : "Offline simulation"}
+          </strong>
+          <span>
+            {state?.mode === "llm"
+              ? "Model-generated drafts, reviewed by humans."
+              : "Deterministic evidence selection — not autonomous model reasoning."}
+          </span>
+        </div>
+        {error && (
+          <div className="error" role="alert">
+            {error}
+            <button onClick={() => setError("")}>×</button>
+          </div>
+        )}
+        {!state ? (
+          <div className="loading">Loading your workspace…</div>
+        ) : (
+          <>
+            <div className="topic-bar">
+              <div>
+                <span className="eyebrow">
+                  {shared
+                    ? "PINNED COLLABORATION TOPIC"
+                    : "NORTHSTAR LOGISTICS · OCT 17, 2026"}
+                </span>
+                <strong>{state.scenario.topic}</strong>
+                <span>
+                  {shared
+                    ? `${rounds}/3 proposal rounds · timing remains proposed until joint approval`
+                    : "Agents prepare. Your team chooses what to share."}
+                </span>
               </div>
-            )}
-            {status !== "idle" && (
-              <div className="step-status">
-                <span className="pulse" /> {status} · validating before delivery
-              </div>
-            )}
-            <div ref={chatEnd} />
-          </div>
-          {error && (
-            <div className="error" role="alert">
-              {error}
-              <button onClick={() => setError("")}>×</button>
-            </div>
-          )}
-          <div className="quick-asks">
-            {(eng
-              ? ["What is the on-prem plan?", "When will Northwind sign?"]
-              : [
-                  "What are enterprise limits?",
-                  "Do 429 responses include Retry-After?",
-                  "What is the on-prem plan?",
-                  "When will Northwind sign?",
-                ]
-            ).map((q) => (
-              <button key={q} onClick={() => setText(q)}>
-                {q}
-              </button>
-            ))}
-          </div>
-          <form
-            className="composer"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (!text.trim() || !conv) return;
-              const before = text;
-              setText("");
-              const result = await run("/conversations/" + conv + "/messages", {
-                text: before,
-              });
-              if (!result) setText(before);
-            }}
-          >
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={
-                "Ask your " + (eng ? "Engineering" : "Sales") + " agent…"
-              }
-              aria-label="Message your team agent"
-              required
-              maxLength={12000}
-              disabled={busy || !token}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  e.currentTarget.form?.requestSubmit();
-                }
-              }}
-            />
-            <div className="composer-footer">
-              <span>◈ Only your team’s agent sees this conversation.</span>
-              <button
-                className="send"
-                type="submit"
-                disabled={busy || !token || !text.trim()}
-              >
-                {busy ? "…" : "↑"}
-              </button>
-            </div>
-          </form>
-          <p className="chat-footnote">
-            Sources are untrusted data. Cross-team releases require approval.
-          </p>
-        </section>
-        <aside className="context">
-          <div className="context-tabs">
-            {[
-              ["thread", "Activity"],
-              ["artifacts", "Library"],
-              ["questions", "Questions"],
-              ["releases", eng ? "Approvals" : "Review status"],
-              ["documents", "Docs"],
-            ].map(([key, title]) => (
-              <button
-                key={key}
-                className={tab === key ? "active" : ""}
-                onClick={() => setTab(key)}
-              >
-                {title}
-                {key === "questions" &&
-                  questions.filter((q) => q.state !== "answered").length >
-                    0 && (
-                    <span>
-                      {questions.filter((q) => q.state !== "answered").length}
-                    </span>
-                  )}
-              </button>
-            ))}
-          </div>
-          <div className="context-scroll">
-            {tab === "artifacts" && (
-              <>
-                <div className="panel-heading">
-                  <span className="eyebrow">KNOWLEDGE LIBRARY</span>
-                  <h2>Share the result. Keep control of the sources.</h2>
-                  <p>
-                    Only artifacts visible to your team appear here. Versions
-                    count visible uploads of the same document name.
-                  </p>
-                </div>
-                {!artifacts.length && (
-                  <p className="empty-state">
-                    No artifacts yet. Engineering can upload a document or
-                    review an escalated answer.
-                  </p>
-                )}
-                {artifacts.map((a) => (
-                  <article className="thread-card artifact-card" key={a.id}>
-                    <div className="card-meta">
-                      <Badge mask={a.labels_mask} />
-                      <span>
-                        {a.type} · v{a.version} · {a.status}
-                      </span>
-                    </div>
-                    <h3>{a.title}</h3>
-                    <p>
-                      {a.audience} · Owner: {a.owner}
-                      {a.approved_by ? ` · Approved by ${a.approved_by}` : ""}
-                    </p>
-                    <p>
-                      {a.text.slice(0, 240)}
-                      {a.text.length > 240 ? "…" : ""}
-                    </p>
-                    <details>
-                      <summary>Identity & integrity</summary>
-                      <p>ID: {a.id}</p>
-                      <p>{a.created_at}</p>
-                      <code className="artifact-hash">SHA-256 {a.hash}</code>
-                    </details>
-                    <div className="artifact-actions">
-                      <button
-                        className="button"
-                        onClick={() => void source(a.id)}
-                      >
-                        Open artifact
-                      </button>
-                      <button
-                        className="button"
-                        onClick={() => {
-                          void request("/artifacts/" + a.id + "/history", token)
-                            .then((data) =>
-                              setDrawer({
-                                title: "Visible approval & source history",
-                                data,
-                              }),
-                            )
-                            .catch((e) => setError(e.message));
-                        }}
-                      >
-                        History
-                      </button>
-                    </div>
-                    <div className="citations">
-                      {a.source_ids.map((ref) => (
-                        <button key={ref} onClick={() => void source(ref)}>
-                          [{ref.slice(0, 8)}]
-                        </button>
-                      ))}
-                    </div>
-                    <small>
-                      Sharing this output does not grant access to private
-                      sources.
-                      {a.status === "retracted"
-                        ? " Withdrawn from future retrieval; delivered copies cannot be unsent."
-                        : ""}
-                    </small>
-                  </article>
-                ))}
-              </>
-            )}
-            {tab === "thread" && (
-              <>
-                <div className="panel-heading">
-                  <span className="eyebrow">SHARED WITH BOTH TEAMS</span>
-                  <h2>Shared knowledge, with evidence.</h2>
-                  <p>
-                    Released answers, documents, updates, and team messages.
-                  </p>
-                </div>
-                {thread.map((m) => (
-                  <div className="thread-card" key={m.id}>
-                    <div className="card-meta">
-                      <span>
-                        {m.meta.kind === "brief"
-                          ? "CHANNEL BRIEF"
-                          : m.meta.kind === "open_question"
-                            ? "OPEN QUESTION"
-                            : m.meta.kind === "released_answer"
-                              ? "APPROVED ANSWER"
-                              : m.type === "digest"
-                                ? "SHIPPED CHANGES"
-                                : m.meta.kind === "document"
-                                  ? "RELEASED DOCUMENT"
-                                  : m.type.toUpperCase()}
-                      </span>
-                      <Badge mask={0} />
-                    </div>
-                    <p className="preserve">{m.text}</p>
-                    {citations(
-                      m.refs.filter((ref) => thread.some((t) => t.id === ref)),
-                    )}
-                    {m.withdrawn && (
-                      <div className="withdrawn">
-                        Retracted · Future context excludes this record. Earlier
-                        deliveries cannot be unsent.
-                      </div>
-                    )}
-                    {(eng || releaseToken) &&
-                      !m.withdrawn &&
-                      ["released_answer", "document", "update"].includes(
-                        String(m.meta.kind),
-                      ) && (
-                        <button
-                          className="text-button danger"
-                          onClick={() => setRetractRecord(m)}
-                        >
-                          Retract release
-                        </button>
-                      )}
-                    <button
-                      className="text-button"
-                      onClick={() => void source(m.id)}
-                    >
-                      View record ↗
-                    </button>
-                  </div>
-                ))}
-                <form
-                  className="thread-composer"
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    const result = await run(
-                      "/channels/" + channelId + "/thread",
-                      { text: post, confirmed: true },
+              {!shared && (
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setText(
+                      team === "B"
+                        ? state.scenario.opening_request
+                        : "@Agent T Prepare a response to the shared request with feasibility conditions.",
                     );
-                    if (result) {
-                      setPost("");
-                      setPostConfirmed(false);
-                    }
                   }}
                 >
-                  <label>
-                    Shared human message
-                    <textarea
-                      value={post}
-                      onChange={(e) => {
-                        setPost(e.target.value);
-                        setPostConfirmed(false);
-                      }}
-                      required
-                      maxLength={12000}
-                      placeholder="Post directly to both teams…"
-                    />
-                  </label>
-                  <label className="confirm">
-                    <input
-                      type="checkbox"
-                      checked={postConfirmed}
-                      onChange={(e) => setPostConfirmed(e.target.checked)}
-                    />
-                    Both teams will see this exact message.
-                  </label>
-                  <button
-                    className="button primary"
-                    disabled={busy || !postConfirmed || !post.trim()}
-                  >
-                    Post to shared thread
-                  </button>
-                </form>
-              </>
-            )}
-            {tab === "questions" && (
-              <>
-                <div className="panel-heading">
-                  <span className="eyebrow">NO GUESSING, NO LOST CONTEXT</span>
-                  <h2>Questions in flight.</h2>
-                  <p>The exact text below was shared with Engineering.</p>
-                </div>
-                {questions.length ? (
-                  questions.map((q) => (
-                    <div className="thread-card" key={q.id}>
-                      <span className={"state " + q.state}>{q.state}</span>
-                      <p>{q.text}</p>
-                      {eng && q.state !== "answered" && (
-                        <button
-                          className="button"
-                          disabled={busy}
-                          onClick={() =>
-                            void run("/questions/" + q.id + "/draft", {})
-                          }
-                        >
-                          Draft another answer
-                        </button>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty">No open questions yet.</div>
-                )}
-              </>
-            )}
-            {tab === "releases" && (
-              <>
-                <div className="panel-heading">
-                  <span className="eyebrow">HUMANS CONTROL THE BOUNDARY</span>
-                  <h2>{eng ? "Review before release." : "Release status."}</h2>
-                  <p>
-                    {eng
-                      ? "Edit the exact text Sales will receive. Approval creates a new shared record."
-                      : "Engineering drafts remain private until an engineer approves them."}
-                  </p>
-                  {eng && (
-                    <button className="button" onClick={() => setUpdate(true)}>
-                      ＋ Proactive update
-                    </button>
-                  )}
-                </div>
-                {eng ? (
-                  releases.length ? (
-                    releases.map((r) => (
-                      <ReleaseCard
-                        key={r.id}
-                        release={r}
-                        internalTerms={internalTerms}
-                        busy={busy}
-                        onApprove={async (value) => {
-                          await run("/releases/" + r.id + "/approve", {
-                            text: value,
-                            text_hash: await sha(value),
-                            expected_hash: r.text_hash,
-                          });
-                        }}
-                        onReject={() =>
-                          void run("/releases/" + r.id + "/reject", {})
-                        }
-                        citations={citations}
-                      />
-                    ))
-                  ) : (
-                    <div className="empty">
-                      No drafts pending. Ask a question as Sales to start a
-                      release workflow.
-                    </div>
-                  )
-                ) : (
-                  questions.map((q) => (
-                    <div className="thread-card" key={q.id}>
-                      <span className={"state " + q.state}>
-                        {q.state === "answered"
-                          ? "Released"
-                          : q.state === "drafted"
-                            ? "Awaiting engineer approval"
-                            : "Awaiting draft"}
-                      </span>
-                      <p>{q.text}</p>
-                    </div>
-                  ))
-                )}
-              </>
-            )}
-            {tab === "documents" && (
-              <>
-                <div className="panel-heading">
-                  <span className="eyebrow">
-                    KNOWLEDGE WITH CLEAR BOUNDARIES
-                  </span>
-                  <h2>
-                    {eng ? "Preview. Then release." : "Released documents."}
-                  </h2>
-                  <p>
-                    {eng
-                      ? "Uploads are Engineering-only by default. Re-uploading creates a new version."
-                      : "Only explicitly released document copies are visible here."}
-                  </p>
-                  {eng && (
-                    <label className="button upload">
-                      ＋ Upload .md / .txt
-                      <input
-                        type="file"
-                        accept=".md,.txt"
-                        disabled={busy}
-                        onChange={async (e) => {
-                          const input = e.currentTarget;
-                          const file = input.files?.[0];
-                          if (file) {
-                            if (file.size > 200000) {
-                              setError("Use a document under 200 KB");
-                              return;
-                            }
-                            await run("/channels/" + channelId + "/documents", {
-                              name: file.name,
-                              text: await file.text(),
-                            });
-                            input.value = "";
-                          }
-                        }}
-                      />
-                    </label>
-                  )}
-                </div>
-                {docs.map((d) => (
-                  <div className="thread-card" key={d.id}>
-                    <div className="card-meta">
-                      <Badge mask={d.labels_mask} />
-                      <span>
-                        {d.released_from
-                          ? "RELEASED COPY"
-                          : d.state.toUpperCase()}
-                      </span>
-                    </div>
-                    <h3>{d.name}</h3>
-                    <p>
-                      {d.chunks.length} chunk{d.chunks.length !== 1 ? "s" : ""}{" "}
-                      · {d.chunks.reduce((n, c) => n + c.text.length, 0)}{" "}
-                      characters
-                    </p>
-                    <details>
-                      <summary>Preview chunks</summary>
-                      {d.chunks.map((c, i) => (
-                        <div className="chunk" key={c.id}>
-                          <small>CHUNK {i + 1}</small>
-                          <p>{c.text}</p>
-                        </div>
-                      ))}
-                    </details>
-                    {eng && d.labels_mask === 1 && d.state === "pending" && (
-                      <button
-                        className="button primary"
-                        onClick={() => setConfirmDoc(d)}
-                      >
-                        Release to Sales →
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
-        </aside>
-      </div>
-      <footer>
-        <span>✦ Human-approved knowledge, team-scoped agents.</span>
-        <span>
-          {split
-            ? "Independent identity & live stream"
-            : "Demo identities · Not production authentication"}
-        </span>
-      </footer>
-      {retractRecord && (
-        <div className="modal-backdrop">
-          <section className="modal">
-            <button className="close" onClick={() => setRetractRecord(null)}>
-              ×
-            </button>
-            <h2>Retract this release?</h2>
-            <p>
-              It will be excluded from future retrieval and answers. Earlier
-              deliveries cannot be unsent. Historical records remain in the
-              audit log.
-            </p>
-            <pre className="release-preview">{retractRecord.text}</pre>
-            <button
-              className="button primary"
-              disabled={busy}
-              onClick={async () => {
-                try {
-                  await request(
-                    "/records/" + retractRecord.id + "/retract",
-                    releaseToken || token,
-                    { confirmed: true },
-                  );
-                  setRetractRecord(null);
-                  await load();
-                } catch (e) {
-                  setError((e as Error).message);
-                }
-              }}
-            >
-              Confirm retraction
-            </button>
-          </section>
-        </div>
-      )}
-      {drawer && (
-        <div className="drawer-backdrop" onClick={() => setDrawer(null)}>
-          <section className="drawer" onClick={(e) => e.stopPropagation()}>
-            <button className="close" onClick={() => setDrawer(null)}>
-              ×
-            </button>
-            <span className="eyebrow">SERVER-VALIDATED RECORD</span>
-            <h2>{drawer.title}</h2>
-            <Inspector data={drawer.data} onSource={source} />
-          </section>
-        </div>
-      )}
-      {confirmDoc && (
-        <div className="modal-backdrop">
-          <section className="modal">
-            <button className="close" onClick={() => setConfirmDoc(null)}>
-              ×
-            </button>
-            <span className="eyebrow">EXPLICIT DECLASSIFICATION</span>
-            <h2>Release {confirmDoc.name} to Sales?</h2>
-            <p>
-              The exact text below will become a new shared record. The original
-              stays Engineering-only.
-            </p>
-            {(/\[(DATE|PRICE|SLA|AVAILABILITY)\]/.test(
-              confirmDoc.original_text ||
-                confirmDoc.chunks.map((c) => c.text).join(" "),
-            ) ||
-              internalTerms.some((term) =>
-                (
-                  confirmDoc.original_text ||
-                  confirmDoc.chunks.map((c) => c.text).join(" ")
-                )
-                  .toLowerCase()
-                  .includes(term.toLowerCase()),
-              )) && (
-              <div className="error">
-                Remove internal terms and resolve placeholders in a new document
-                version before release.
+                  Use suggested request ↙
+                </button>
+              )}
+              {shared && hasBoth && (
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={() => setDecisionOpen(true)}
+                >
+                  Prepare decision
+                </button>
+              )}
+            </div>
+            {!shared && state.drafts.length > 0 && (
+              <div className="review-notice">
+                <span>
+                  ✦ {state.drafts.length} private draft
+                  {state.drafts.length > 1 ? "s" : ""} ready for review
+                </span>
+                <button
+                  className="button primary"
+                  onClick={() => setReview(state.drafts.at(-1)!)}
+                >
+                  Review draft →
+                </button>
               </div>
             )}
-            <pre className="release-preview">
-              {confirmDoc.original_text ??
-                confirmDoc.chunks.map((c) => c.text).join("\n\n")}
-            </pre>
-            <button
-              className="button primary"
-              disabled={
-                busy ||
-                /\[(DATE|PRICE|SLA|AVAILABILITY)\]/.test(
-                  confirmDoc.original_text ||
-                    confirmDoc.chunks.map((c) => c.text).join(" "),
-                ) ||
-                internalTerms.some((term) =>
-                  (
-                    confirmDoc.original_text ||
-                    confirmDoc.chunks.map((c) => c.text).join(" ")
-                  )
-                    .toLowerCase()
-                    .includes(term.toLowerCase()),
-                )
-              }
-              onClick={async () => {
-                await run("/documents/" + confirmDoc.id + "/release", {
-                  confirmed: true,
-                  text_hash: await sha(
-                    confirmDoc.original_text ??
-                      confirmDoc.chunks.map((c) => c.text).join("\n\n"),
-                  ),
-                });
-                setConfirmDoc(null);
-              }}
-            >
-              Confirm exact-text release →
-            </button>
-          </section>
-        </div>
+            <div className="timeline" ref={timeline}>
+              {!shared && (
+                <div className="history-heading">
+                  <span>PRIVATE SOURCE HISTORY</span>
+                  <p>
+                    Imported fictional records. Click a source to inspect its
+                    full context.
+                  </p>
+                </div>
+              )}
+              {!shared &&
+                state.sources.map((s) => (
+                  <article className="message source-message" key={s.id}>
+                    <div
+                      className={
+                        "avatar source-avatar " +
+                        provider(s).toLowerCase().replace(" ", "-")
+                      }
+                    >
+                      {provider(s).slice(0, 1)}
+                    </div>
+                    <div className="message-content">
+                      <div className="message-meta">
+                        <strong>{provider(s)}</strong>
+                        <span className="bot-tag">SOURCE</span>
+                        <time>{time(s.timestamp)}</time>
+                      </div>
+                      <p className="source-author">
+                        {s.author} · {s.source}
+                      </p>
+                      <p>{s.text}</p>
+                      <button
+                        className="citation"
+                        onClick={() => void source(s.id)}
+                      >
+                        {s.id} ↗
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              {shared && messages.length === 0 && (
+                <div className="empty">
+                  <div>↔</div>
+                  <h2>A place to find a workable plan.</h2>
+                  <p>
+                    No private evidence has been shared. Start in #team-b, ask
+                    Agent B to prepare a proposal, and approve exactly what
+                    crosses teams.
+                  </p>
+                  <button className="button" onClick={() => setChannel(own)}>
+                    Go to #{own}
+                  </button>
+                </div>
+              )}
+              {messages.map((m) => (
+                <article className="message" key={m.id}>
+                  <div
+                    className={
+                      "avatar " +
+                      (m.type === "neg_proposal"
+                        ? "agent-avatar"
+                        : "human-avatar")
+                    }
+                  >
+                    {m.type === "neg_proposal"
+                      ? "✦"
+                      : String(m.meta.author || m.meta.team || team).slice(
+                          0,
+                          1,
+                        )}
+                  </div>
+                  <div className="message-content">
+                    <div className="message-meta">
+                      <strong>
+                        {m.type === "neg_proposal"
+                          ? `Agent ${m.meta.team}`
+                          : m.type === "neg_notice"
+                            ? `Agent ${team}`
+                            : String(m.meta.author || m.author_id)}
+                      </strong>
+                      {m.type === "neg_proposal" && (
+                        <span className="bot-tag">APPROVED DRAFT</span>
+                      )}
+                      <time>{time(m.ts)}</time>
+                    </div>
+                    {m.type === "neg_proposal" ? (
+                      <Proposal row={m} ownTeam={team} onSource={source} />
+                    ) : (
+                      <p className="message-body">{m.text}</p>
+                    )}
+                  </div>
+                </article>
+              ))}
+              {shared && state.decision && (
+                <DecisionCard
+                  decision={state.decision}
+                  team={team}
+                  busy={busy}
+                  approve={(resolved) =>
+                    action(() =>
+                      api(
+                        "/decisions/" + state.decision!.id + "/approve",
+                        token,
+                        {
+                          hash: state.decision!.hash,
+                          confirmed: true,
+                          conditions_resolved: resolved,
+                        },
+                      ),
+                    )
+                  }
+                />
+              )}
+              {!shared && (
+                <div className="quick-start">
+                  <strong>Work with Agent {team}</strong>
+                  <p>
+                    {team === "B"
+                      ? "Build an evidence-backed request for Technical review."
+                      : "Assess the approved request against Technical evidence."}
+                  </p>
+                  <button
+                    className="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setText(
+                        team === "B"
+                          ? state.scenario.opening_request
+                          : "@Agent T Prepare a counterproposal to the shared request with feasibility conditions and selected evidence.",
+                      );
+                      timeline.current?.scrollTo({
+                        top: timeline.current.scrollHeight,
+                        behavior: "smooth",
+                      });
+                    }}
+                  >
+                    Use suggested request ↙
+                  </button>
+                </div>
+              )}
+            </div>
+            <form className="composer" onSubmit={(e) => void send(e)}>
+              <textarea
+                aria-label="Message"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                disabled={busy}
+                placeholder={`Message #${channel}${shared ? ` · @Agent ${team} stages a private draft` : ` · mention @Agent ${team} to prepare a draft`}`}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (!shared || confirmed) void send(e);
+                  }
+                }}
+              />
+              <div className="composer-bottom">
+                {shared ? (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={confirmed}
+                      onChange={(e) => setConfirmed(e.target.checked)}
+                    />{" "}
+                    Visible to both teams. Mentions stage private drafts.
+                  </label>
+                ) : (
+                  <span>◈ Only your team can see this channel</span>
+                )}
+                <button
+                  className="button primary"
+                  type="submit"
+                  disabled={busy || !text.trim() || (shared && !confirmed)}
+                >
+                  {busy ? "Preparing…" : "Send ↑"}
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+      </main>
+      {review && token && (
+        <Review
+          draft={review}
+          token={token}
+          sources={state?.sources || []}
+          onClose={() => setReview(null)}
+          onSource={source}
+          onPublished={() => {
+            setReview(null);
+            setChannel("collab");
+            void refresh();
+          }}
+          onError={setError}
+        />
       )}
-      {(newChannel || update) && (
-        <div className="modal-backdrop">
-          <section className="modal">
+      {detail && (
+        <div className="modal-shade" onClick={() => setDetail(null)}>
+          <section
+            className="modal source-detail"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="source-title"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
               className="close"
-              onClick={() => {
-                setNewChannel(false);
-                setUpdate(false);
-              }}
+              aria-label="Close source"
+              onClick={() => setDetail(null)}
             >
               ×
             </button>
-            <h2>
-              {newChannel
-                ? "Create a shared channel"
-                : "Draft a proactive update"}
-            </h2>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const form = new FormData(e.currentTarget);
-                const body = newChannel
-                  ? {
-                      name: form.get("name"),
-                      account: form.get("account"),
-                      brief: form.get("text"),
-                    }
-                  : { text: form.get("text") };
-                const result = await run(
-                  newChannel
-                    ? "/channels"
-                    : "/channels/" + channelId + "/updates",
-                  body,
-                );
-                if (result) {
-                  setNewChannel(false);
-                  setUpdate(false);
-                }
-              }}
-            >
-              {newChannel && (
-                <>
-                  <label>
-                    Channel name
-                    <input name="name" required maxLength={120} />
-                  </label>
-                  <label>
-                    Account
-                    <input name="account" required maxLength={120} />
-                  </label>
-                </>
-              )}
-              <label>
-                {newChannel
-                  ? "Shared brief (visible to Sales)"
-                  : "Engineering-only draft"}
-                <textarea name="text" required maxLength={12000} />
-              </label>
-              <button className="button primary" disabled={busy}>
-                {newChannel
-                  ? "Publish shared channel"
-                  : "Save draft for approval"}
-              </button>
-            </form>
+            <span className="eyebrow">PRIVATE SOURCE · TEAM {team}</span>
+            <h2 id="source-title">{detail.id}</h2>
+            <p>
+              <strong>{detail.author}</strong>
+              <br />
+              {time(detail.timestamp)} · {detail.source}
+            </p>
+            <blockquote>{detail.text}</blockquote>
+            <p className="muted">
+              This raw source stays private. Recipients of approved quotes can
+              see only those excerpts, not this record.
+            </p>
           </section>
         </div>
       )}
-    </section>
-  );
-}
-function ReleaseCard({
-  release: r,
-  busy,
-  onApprove,
-  onReject,
-  citations,
-  internalTerms = [],
-}: {
-  release: Release;
-  busy: boolean;
-  onApprove: (s: string) => Promise<void>;
-  onReject: () => void;
-  citations: (refs: string[]) => React.ReactNode;
-  internalTerms?: string[];
-}) {
-  const [text, setText] = useState(r.text),
-    [confirm, setConfirm] = useState(false),
-    [values, setValues] = useState<Record<string, string>>({}),
-    [none, setNone] = useState<Record<string, boolean>>({});
-  const fields = [
-    ...new Set([
-      ...(r.text.match(/\[(DATE|PRICE|SLA|AVAILABILITY)\]/g) || []).map((f) =>
-        f.slice(1, -1),
-      ),
-      ...((r.event.meta.high_risk_fields as string[]) || []),
-    ]),
-  ];
-  let approved = text;
-  for (const field of fields)
-    approved = approved.replaceAll(
-      "[" + field + "]",
-      none[field]
-        ? `No ${field.toLowerCase()} is committed`
-        : values[field] || "[" + field + "]",
-    );
-  const blockedLineage = !!r.event.withdrawn;
-  const blockedTerms = internalTerms.filter((term) =>
-    approved.toLowerCase().includes(term.toLowerCase()),
-  );
-  const unresolved =
-    /\[(DATE|PRICE|SLA|AVAILABILITY)\]/.test(approved) ||
-    fields.some((f) => !none[f] && !values[f]);
-  return (
-    <div className="thread-card release-card">
-      <div className="card-meta">
-        <Badge mask={1} />
-        <span>
-          {r.kind} · {r.state}
-        </span>
-      </div>
-      {r.state === "staged" ? (
-        <>
-          <label>
-            Editable Engineering draft
-            <textarea
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value);
-                setConfirm(false);
-              }}
-              maxLength={12000}
-            />
-          </label>
-          {citations(r.event.refs)}
-          {fields.map((field) => (
-            <div className="risk-control" key={field}>
-              <label>
-                {field} — human supplied
-                <input
-                  type={field === "DATE" ? "date" : "text"}
-                  aria-label={field + " value"}
-                  value={values[field] || ""}
-                  disabled={none[field]}
-                  onChange={(e) => {
-                    setValues({ ...values, [field]: e.target.value });
-                    setConfirm(false);
-                  }}
-                />
-              </label>
-              <label className="confirm">
-                <input
-                  type="checkbox"
-                  checked={!!none[field]}
-                  onChange={(e) => {
-                    setNone({ ...none, [field]: e.target.checked });
-                    setConfirm(false);
-                  }}
-                />
-                {field === "DATE"
-                  ? "No date is committed"
-                  : `No ${field.toLowerCase()} is committed`}
-              </label>
+      {decisionOpen && state && token && (
+        <DecisionModal
+          state={state}
+          token={token}
+          onClose={() => setDecisionOpen(false)}
+          onSaved={() => {
+            setDecisionOpen(false);
+            void refresh();
+          }}
+        />
+      )}
+      {resetOpen && (
+        <div className="modal-shade">
+          <section className="modal small" role="dialog" aria-modal="true">
+            <h2>Reset the negotiation?</h2>
+            <p>
+              Restore the same private fixtures and an empty #collab. Previous
+              audit records remain stored in the retired run.
+            </p>
+            <div className="actions">
+              <button className="button" onClick={() => setResetOpen(false)}>
+                Cancel
+              </button>
+              <button
+                className="button primary"
+                disabled={busy}
+                onClick={() =>
+                  void action(async () => {
+                    await api("/reset", token, { confirmed: true });
+                    setResetOpen(false);
+                    setReview(null);
+                    setChannel(own);
+                  })
+                }
+              >
+                Reset demo
+              </button>
             </div>
-          ))}
-          {blockedLineage && (
-            <div className="withdrawn">
-              This draft references withdrawn context. Generate a new draft
-              before approval.
-            </div>
-          )}
-          {blockedTerms.length > 0 && (
-            <div className="error">
-              Remove internal terms before release: {blockedTerms.join(", ")}
-            </div>
-          )}
-          <label>Exact text that Sales will receive</label>
-          <pre className="release-preview">{approved}</pre>
-          <label className="confirm">
-            <input
-              type="checkbox"
-              checked={confirm}
-              onChange={(e) => setConfirm(e.target.checked)}
-            />
-            I approve this exact text for Sales.
-          </label>
-          <div className="button-row">
-            <button
-              className="button primary"
-              disabled={
-                busy ||
-                !confirm ||
-                !approved.trim() ||
-                unresolved ||
-                blockedTerms.length > 0 ||
-                blockedLineage
-              }
-              onClick={() => void onApprove(approved)}
-            >
-              Approve and release to Sales
-            </button>
-            <button className="button" disabled={busy} onClick={onReject}>
-              Reject
-            </button>
-          </div>
-        </>
-      ) : (
-        <p className="preserve">{r.text}</p>
+          </section>
+        </div>
       )}
     </div>
   );
 }
-function Inspector({
-  data,
+function Proposal({
+  row,
+  ownTeam,
   onSource,
 }: {
-  data: unknown;
+  row: Row;
+  ownTeam: string;
   onSource: (id: string) => void;
 }) {
-  const d = data as Record<string, unknown>;
-  if (!d) return <p>No manifest.</p>;
-  if ("allowed_mask" in d) {
-    const labels = (d.context_labels as Record<string, number>) || {};
-    return (
-      <>
-        <div className="inspector-grid">
-          <div>
-            <small>AUDIENCE / ALLOWED LABELS</small>
-            <Badge mask={0} />
-            <Badge mask={Number(d.allowed_mask)} />
-          </div>
-          <div>
-            <small>OUTPUT LABELS</small>
-            <Badge mask={Number(d.output_labels)} />
-          </div>
-          <div>
-            <small>MODEL</small>
-            <strong>{String(d.model)}</strong>
-          </div>
-          <div>
-            <small>LATENCY</small>
-            <strong>{String(d.latency)} ms</strong>
-          </div>
-        </div>
-        <h3>Records actually in context</h3>
-        {[0, 1, 2]
-          .filter((mask) => Object.values(labels).includes(mask))
-          .map((mask) => (
-            <div className="context-group" key={mask}>
-              <Badge mask={mask} />
-              {Object.entries(labels)
-                .filter(([, m]) => m === mask)
-                .map(([id]) => (
-                  <button
-                    className="source-id"
-                    key={id}
-                    onClick={() => onSource(id)}
-                  >
-                    {id} ↗
-                  </button>
-                ))}
+  const args = row.meta.arguments as { id: string; text: string }[];
+  const evidence = row.meta.evidence as (Evidence & {
+    author: string;
+    timestamp: string;
+    source: string;
+  })[];
+  return (
+    <div className="proposal">
+      <div className="proposal-label">
+        PROPOSED · {String(row.meta.kind).replaceAll("_", " ")}{" "}
+        <span>
+          Human approved by{" "}
+          {row.meta.approved_by === "business-member" ? "Maya" : "Noah"}
+        </span>
+      </div>
+      <p>{String(row.meta.introduction || row.text.split("\n\n")[1])}</p>
+      {args.map((a) => (
+        <p key={a.id} className="argument">
+          {a.text}
+        </p>
+      ))}
+      {evidence.length > 0 ? (
+        <div className="excerpts">
+          <strong>Approved evidence excerpts</strong>
+          {evidence.map((e, i) => (
+            <div className="excerpt" key={i}>
+              <blockquote>{e.exact_excerpt}</blockquote>
+              <small>
+                {e.author} · {time(e.timestamp)} · {e.source}
+              </small>
+              {row.meta.team === ownTeam ? (
+                <button
+                  className="citation"
+                  onClick={() => onSource(e.source_id)}
+                >
+                  {e.source_id} · inspect source
+                </button>
+              ) : (
+                <span className="citation read-only">
+                  {e.source_id} · approved excerpt only
+                </span>
+              )}
             </div>
           ))}
-        <h3>Citation validation</h3>
-        <pre>{JSON.stringify(d.citations_validated, null, 2)}</pre>
-        <h3>Outbound scan</h3>
-        <p className="scan-result">✓ {String(d.scan_result)}</p>
-        <h3>Tool calls</h3>
-        <pre>{JSON.stringify(d.tool_calls, null, 2)}</pre>
-      </>
-    );
-  }
-  return (
-    <>
-      <Badge mask={Number(d.labels_mask || 0)} />
-      <p className="preserve">{String(d.text || d.note || "")}</p>
-      <details>
-        <summary>Record metadata</summary>
-        <pre>{JSON.stringify(d, null, 2)}</pre>
+        </div>
+      ) : (
+        <p className="muted">No private evidence excerpts were shared.</p>
+      )}
+      <details className="approval-details">
+        <summary>Approval record</summary>
+        <p>
+          Approved by {String(row.meta.approved_by)} · {time(row.ts)}
+        </p>
+        <code>SHA-256 {row.hash}</code>
+        <p>Immutable publication · {row.id}</p>
+        <p>
+          {row.meta.mode === "rules"
+            ? "Offline simulation draft"
+            : "LLM-generated draft"}{" "}
+          · source-supported proposals are not commitments.
+        </p>
       </details>
-    </>
+    </div>
   );
 }
-function Operator({ reviewerToken }: { reviewerToken?: string }) {
-  const [token, setToken] = useState(""),
-    [records, setRecords] = useState<RecordRow[]>([]),
-    [error, setError] = useState("");
-  useEffect(() => {
-    if (!reviewerToken) return;
-    void request<{ token: string }>("/auth/operator", reviewerToken, {})
-      .then((d) => setToken(d.token))
-      .catch((e) => setError(e.message));
-  }, [reviewerToken]);
-  const load = useCallback(() => {
-    if (token)
-      void request<RecordRow[]>("/operator/log", token)
-        .then(setRecords)
-        .catch((e) => setError(e.message));
-  }, [token]);
-  useEffect(load, [load]);
-  useStream(token, load, () => {});
-  return (
-    <section className="operator-strip">
-      <div>
-        <strong>⚠ DEMO OPERATOR · FULL CLEARANCE</strong>
-        <span>Intentionally sees both teams. Never a Sales-agent tool.</span>
-      </div>
-      {error && <p>{error}</p>}
-      <div className="operator-log">
-        {records.reverse().map((r) => (
-          <div key={r.id}>
-            <span>#{r.seq}</span>
-            <Badge mask={r.labels_mask} />
-            <span>{r.type}</span>
-            <span>
-              Eng: {(r.labels_mask & ~1) === 0 ? "✓" : "—"} · Sales:{" "}
-              {(r.labels_mask & ~2) === 0 ? "✓" : "—"}
-            </span>
-            <span>{r.text}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-function Demo() {
-  const [sales, setSales] = useState<Session | null>(null),
-    [eng, setEng] = useState<Session | null>(null),
-    [channels, setChannels] = useState<Channel[]>([]),
-    [channel, setChannel] = useState(""),
-    [error, setError] = useState(""),
-    [theme, setTheme] = useState(
-      localStorage.getItem("relay-theme") || "light",
+function Review({
+  draft,
+  token,
+  sources,
+  onClose,
+  onSource,
+  onPublished,
+  onError,
+}: {
+  draft: Draft;
+  token: string;
+  sources: Source[];
+  onClose: () => void;
+  onSource: (id: string) => void;
+  onPublished: () => void;
+  onError: (e: string) => void;
+}) {
+  const [option, setOption] = useState(0),
+    [args, setArgs] = useState(
+      draft.meta.options[0].arguments.map((a) => a.id),
     ),
-    [reset, setReset] = useState(false),
-    [create, setCreate] = useState(false);
-  const refresh = useCallback(() => {
-    if (sales)
-      void request<Channel[]>("/channels", sales.token).then((cs) => {
-        setChannels(cs);
-        setChannel((current) =>
-          cs.some((c) => c.id === current) ? current : cs[0]?.id || "",
-        );
-      });
-  }, [sales]);
-  useEffect(refresh, [refresh]);
-  useStream(sales?.token, refresh, () => {});
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("relay-theme", theme);
-  }, [theme]);
-  async function control(path: string, body: unknown) {
-    if (!eng) return;
+    [quotes, setQuotes] = useState<string[]>([]),
+    [preview, setPreview] = useState<Preview | null>(null),
+    [confirmed, setConfirmed] = useState(false),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const selected = draft.meta.options[option],
+    selection: Selection = {
+      option,
+      argument_ids: args,
+      evidence_keys: quotes,
+    };
+  function change() {
+    setPreview(null);
+    setConfirmed(false);
+    setError("");
+  }
+  async function run(fn: () => Promise<void>) {
+    setBusy(true);
+    setError("");
     try {
-      const data = await request<{ channel_id?: string; id?: string }>(
-        path,
-        eng.token,
-        body,
-      );
-      if (data.channel_id || data.id) setChannel(data.channel_id || data.id!);
-      refresh();
-      setReset(false);
-      setCreate(false);
+      await fn();
     } catch (e) {
       setError((e as Error).message);
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
   return (
-    <>
-      <header className="demo-header">
-        <a className="brand" href="/demo">
-          relay<span>✳</span>
-        </a>
-        <select
-          aria-label="Shared demo channel"
-          value={channel}
-          onChange={(e) => setChannel(e.target.value)}
-        >
-          {channels.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <button
-          className="button"
-          disabled={!eng}
-          onClick={() => setCreate(true)}
-        >
-          ＋ Channel
+    <div className="modal-shade">
+      <section
+        className="modal review-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="review-title"
+      >
+        <button className="close" aria-label="Close review" onClick={onClose}>
+          ×
         </button>
-        <span className="header-caption">
-          Sales ↔ Engineering · Human-controlled sharing
+        <span className="eyebrow">
+          TEAM {draft.meta.team} · PRIVATE UNTIL APPROVED
         </span>
-        <button
-          className="button"
-          disabled={!eng || !channel}
-          onClick={() => void control("/demo/merge", { channel_id: channel })}
-        >
-          ＋ Simulate a new customer-facing merge
-        </button>
-        <button
-          className="button"
-          disabled={!eng || !channel}
-          onClick={() => void control("/github/sync", { channel_id: channel })}
-        >
-          Sync GitHub
-        </button>
-        <a
-          className="button"
-          href={
-            location.search.includes("operator=1")
-              ? "/demo"
-              : "/demo?operator=1"
-          }
-        >
-          Operator view
-        </a>
-        <button
-          className="button"
-          onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-        >
-          {theme === "light" ? "☾ Dark" : "☀ Light"}
-        </button>
-        <button
-          className="button"
-          disabled={!eng}
-          onClick={() => setReset(true)}
-        >
-          Reset
-        </button>
-      </header>
-      <div className="policy-banner">
-        <strong>Agents draft. Humans approve.</strong> Engineering answers cross
-        teams only after an engineer approves the exact text. Reps confirm
-        escalations. Agents never fill in dates.
-      </div>
-      {error && <div className="error">{error}</div>}
-      <div className="demo-grid">
-        <RelayPane
-          initialUser="priya"
-          split
-          onSession={setSales}
-          channelOverride={channel}
-          releaseToken={eng?.token}
-        />
-        <RelayPane
-          initialUser="ava"
-          split
-          onSession={setEng}
-          channelOverride={channel}
-        />
-      </div>
-      {new URLSearchParams(location.search).get("operator") === "1" && (
-        <Operator reviewerToken={eng?.token} />
-      )}
-      {create && (
-        <div className="modal-backdrop">
-          <section className="modal">
-            <button className="close" onClick={() => setCreate(false)}>
-              ×
-            </button>
-            <h2>Create a shared channel</h2>
-            <p>
-              The brief will be visible to both teams. Documents remain private
-              until separately released.
-            </p>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const form = new FormData(e.currentTarget);
-                await control("/channels", {
-                  name: form.get("name"),
-                  account: form.get("account"),
-                  brief: form.get("brief"),
-                });
-              }}
-            >
-              <label>
-                Channel name
-                <input name="name" required maxLength={120} />
-              </label>
-              <label>
-                Account
-                <input name="account" required maxLength={120} />
-              </label>
-              <label>
-                Shared engineer brief
-                <textarea name="brief" required maxLength={12000} />
-              </label>
-              <button className="button primary">
-                Create shared channel as Ava
+        <h2 id="review-title">Choose what crosses teams.</h2>
+        <p className="muted">
+          Review the agent’s wording as well as its evidence. Exact quotes are
+          unchecked by default. Dates remain proposals.
+        </p>
+        {draft.meta.mode === "rules" && (
+          <p className="simulation-note">
+            Offline simulation · deterministic evidence selection
+          </p>
+        )}
+        {draft.meta.options.length > 1 && (
+          <div className="option-tabs">
+            {draft.meta.options.map((o, i) => (
+              <button
+                key={i}
+                className={option === i ? "button selected" : "button"}
+                onClick={() => {
+                  setOption(i);
+                  setArgs(o.arguments.map((a) => a.id));
+                  setQuotes([]);
+                  change();
+                }}
+              >
+                {o.kind === "accept_with_conditions"
+                  ? "Accept with conditions"
+                  : "Counterproposal"}
               </button>
-            </form>
-          </section>
+            ))}
+          </div>
+        )}
+        <div className="introduction">
+          <strong>Topic introduction · included</strong>
+          <p>{selected.introduction}</p>
         </div>
-      )}
-      {reset && (
-        <div className="modal-backdrop">
-          <section className="modal">
-            <button className="close" onClick={() => setReset(false)}>
-              ×
-            </button>
-            <h2>Reset the demo?</h2>
-            <p>
-              This retires current channels and seeds a fresh scenario. Audit
-              history remains append-only.
-            </p>
-            <button
-              className="button primary"
-              onClick={() => void control("/demo/reset", {})}
-            >
-              Confirm demo reset
-            </button>
+        {selected.arguments.map((a) => (
+          <article className="review-argument" key={a.id}>
+            <label className="argument-toggle">
+              <input
+                type="checkbox"
+                checked={args.includes(a.id)}
+                onChange={(e) => {
+                  setArgs(
+                    e.target.checked
+                      ? [...args, a.id]
+                      : args.filter((id) => id !== a.id),
+                  );
+                  setQuotes(quotes.filter((q) => !q.startsWith(a.id + ":")));
+                  change();
+                }}
+              />
+              <strong>{a.text}</strong>
+            </label>
+            <div className="evidence-candidates">
+              {a.evidence_candidates.map((e, i) => {
+                const key = a.id + ":" + i,
+                  s =
+                    sources.find((s) => s.id === e.source_id) ||
+                    draft.meta.provenance?.[e.source_id];
+                return (
+                  <div className="candidate" key={key}>
+                    <blockquote>{e.exact_excerpt}</blockquote>
+                    <small>
+                      {s?.author} · {s?.timestamp && time(s.timestamp)} ·{" "}
+                      {s?.source}
+                    </small>
+                    <button
+                      className="citation"
+                      onClick={() => onSource(e.source_id)}
+                    >
+                      {e.source_id}
+                    </button>
+                    <label className="share-quote">
+                      <input
+                        type="checkbox"
+                        checked={quotes.includes(key)}
+                        disabled={!args.includes(a.id)}
+                        onChange={(ev) => {
+                          setQuotes(
+                            ev.target.checked
+                              ? [...quotes, key]
+                              : quotes.filter((k) => k !== key),
+                          );
+                          change();
+                        }}
+                      />{" "}
+                      Share this exact excerpt
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        ))}
+        {error && <div className="error">{error}</div>}
+        {preview && (
+          <section className="exact-preview">
+            <span className="eyebrow">EXACT CONTENT TO BE PUBLISHED</span>
+            <pre>{preview.body}</pre>
+            <code>SHA-256 {preview.hash}</code>
+            <label className="approval-check">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+              />{" "}
+              I approve this exact text and selected excerpts for both teams.
+              These terms are proposed, not committed.
+            </label>
           </section>
+        )}
+        <div className="actions review-actions">
+          <button
+            className="button"
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await api("/drafts/" + draft.id + "/discard", token, {});
+                onClose();
+              })
+            }
+          >
+            Cancel & discard
+          </button>
+          <button
+            className="button"
+            disabled={busy || args.length === 0}
+            onClick={() =>
+              void run(async () => {
+                setPreview(
+                  await api<Preview>(
+                    "/drafts/" + draft.id + "/preview",
+                    token,
+                    selection,
+                  ),
+                );
+                setConfirmed(false);
+              })
+            }
+          >
+            Preview
+          </button>
+          <button
+            className="button primary"
+            disabled={busy || !preview || !confirmed}
+            onClick={() =>
+              void run(async () => {
+                await api("/drafts/" + draft.id + "/publish", token, {
+                  selection,
+                  hash: preview!.hash,
+                  confirmed: true,
+                });
+                onPublished();
+              })
+            }
+          >
+            {busy ? "Working…" : "Post to #collab"}
+          </button>
         </div>
-      )}
-    </>
+      </section>
+    </div>
   );
 }
-document.documentElement.dataset.theme =
-  localStorage.getItem("relay-theme") || "light";
-createRoot(document.getElementById("root")!).render(
-  location.pathname === "/demo" ? <Demo /> : <RelayPane initialUser="priya" />,
-);
+function DecisionCard({
+  decision,
+  team,
+  busy,
+  approve,
+}: {
+  decision: Decision;
+  team: string;
+  busy: boolean;
+  approve: (resolved: boolean) => Promise<void>;
+}) {
+  const [confirmed, setConfirmed] = useState(false),
+    [resolved, setResolved] = useState(false);
+  const accepted = team === "B" ? decision.accepted_B : decision.accepted_T;
+  return (
+    <section className="decision-card">
+      <span className="eyebrow">
+        JOINT DECISION ·{" "}
+        {decision.status === "conditional"
+          ? "CONDITIONAL / PENDING READINESS"
+          : decision.status === "agreed"
+            ? "APPROVED BY BOTH TEAMS"
+            : "AWAITING TEAM APPROVALS"}
+      </span>
+      <h2>
+        {decision.status === "agreed"
+          ? "Agreed terms"
+          : decision.status === "conditional"
+            ? "Conditional agreement"
+            : "Review the same decision together"}
+      </h2>
+      <p className="message-body">{decision.text}</p>
+      <div className="vote-chips">
+        <span>{decision.accepted_B ? "✓" : "○"} Business</span>
+        <span>{decision.accepted_T ? "✓" : "○"} Technical</span>
+      </div>
+      <p className="muted">
+        {decision.meta.conditional
+          ? "Timing remains conditional even after both teams approve. No unconditional deadline is committed."
+          : "Commitment requires both teams’ approval and confirmation that conditions are resolved."}
+      </p>
+      {!accepted && (
+        <>
+          <label className="approval-check">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+            />{" "}
+            I approve this exact decision for Team {team}.
+          </label>
+          {!decision.meta.conditional && (
+            <label className="approval-check">
+              <input
+                type="checkbox"
+                checked={resolved}
+                onChange={(e) => setResolved(e.target.checked)}
+              />{" "}
+              All conditions are resolved; I authorize these terms.
+            </label>
+          )}
+          <button
+            className="button primary"
+            disabled={
+              busy || !confirmed || (!decision.meta.conditional && !resolved)
+            }
+            onClick={() =>
+              void approve(resolved).then(() => setConfirmed(false))
+            }
+          >
+            Approve for Team {team}
+          </button>
+        </>
+      )}
+      <details className="approval-details">
+        <summary>Decision integrity</summary>
+        <code>SHA-256 {decision.hash}</code>
+        <p>Votes are separate immutable records bound to this exact text.</p>
+      </details>
+    </section>
+  );
+}
+function DecisionModal({
+  state,
+  token,
+  onClose,
+  onSaved,
+}: {
+  state: State;
+  token: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const proposals = state.messages.filter((m) => m.type === "neg_proposal");
+  const last = proposals.slice(-2);
+  const [text, setText] = useState(
+      last
+        .flatMap((p) =>
+          (p.meta.arguments as { text: string }[]).map((a) => "• " + a.text),
+        )
+        .join("\n"),
+    ),
+    [conditional, setConditional] = useState(true),
+    [confirmed, setConfirmed] = useState(false),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  async function save() {
+    setBusy(true);
+    try {
+      await api("/decisions", token, { text, conditional, confirmed: true });
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="modal-shade">
+      <section className="modal" role="dialog" aria-modal="true">
+        <button className="close" onClick={onClose} aria-label="Close decision">
+          ×
+        </button>
+        <span className="eyebrow">HUMAN-WRITTEN · APPROVED BY EACH TEAM</span>
+        <h2>Write the final decision.</h2>
+        <p className="muted">
+          Starting points come only from approved shared arguments. Edit the
+          scope, proposed dates, exclusions, and remaining gates. Posting starts
+          review; it does not approve for either team.
+        </p>
+        <textarea
+          aria-label="Decision summary"
+          className="decision-input"
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            setConfirmed(false);
+          }}
+        />
+        <label className="approval-check">
+          <input
+            type="checkbox"
+            checked={conditional}
+            onChange={(e) => {
+              setConditional(e.target.checked);
+              setConfirmed(false);
+            }}
+          />{" "}
+          Conditional: readiness gates or timing remain unresolved
+        </label>
+        <label className="approval-check">
+          <input
+            type="checkbox"
+            checked={confirmed}
+            onChange={(e) => setConfirmed(e.target.checked)}
+          />{" "}
+          Publish this exact summary to both teams for separate approval
+        </label>
+        {error && <div className="error">{error}</div>}
+        <div className="actions">
+          <button className="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="button primary"
+            disabled={busy || !confirmed || !text.trim()}
+            onClick={() => void save()}
+          >
+            Request both approvals
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+createRoot(document.getElementById("root")!).render(<App />);
